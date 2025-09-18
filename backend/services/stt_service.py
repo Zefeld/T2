@@ -1,32 +1,70 @@
-import onnx_asr
-import os
 import asyncio
-from typing import Optional
 import logging
-import soundfile as sf
+import tempfile
+import os
+from typing import Optional
+import wave
 import numpy as np
+import onnxruntime as ort
+import librosa
+import requests
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 class STTService:
-    """Сервис для распознавания речи с использованием Nemo Parakeet V3"""
+    """Сервис распознавания речи с использованием Nemo Parakeet V3"""
     
     def __init__(self):
-        self.model = None
-        self.model_name = "nemo-parakeet-tdt-0.6b-v3"
-        self._initialize_model()
-    
-    def _initialize_model(self):
+        self.model_path = None
+        self.session = None
+        self.sample_rate = 16000
+        self.model_url = "https://huggingface.co/s0me-0ne/parakeet-tdt-0.6b-v3-onnx/resolve/main/model.onnx"
+        self.vocab_url = "https://huggingface.co/s0me-0ne/parakeet-tdt-0.6b-v3-onnx/resolve/main/vocab.txt"
+        self.vocab = None
+        
+    async def initialize(self):
         """Инициализация модели STT"""
         try:
-            # Загрузка модели Parakeet TDT V3 в формате ONNX
-            logger.info(f"Загрузка STT модели {self.model_name}...")
-            self.model = onnx_asr.load_model(self.model_name)
-            logger.info(f"STT модель {self.model_name} успешно загружена")
+            # Создание директории для моделей
+            models_dir = Path("models/stt")
+            models_dir.mkdir(parents=True, exist_ok=True)
+            
+            model_file = models_dir / "parakeet_v3.onnx"
+            vocab_file = models_dir / "vocab.txt"
+            
+            # Загрузка модели если не существует
+            if not model_file.exists():
+                logger.info("Загрузка модели Parakeet V3...")
+                await self._download_file(self.model_url, model_file)
+                
+            if not vocab_file.exists():
+                logger.info("Загрузка словаря...")
+                await self._download_file(self.vocab_url, vocab_file)
+            
+            # Загрузка словаря
+            with open(vocab_file, 'r', encoding='utf-8') as f:
+                self.vocab = [line.strip() for line in f.readlines()]
+            
+            # Инициализация ONNX сессии
+            self.session = ort.InferenceSession(str(model_file))
+            self.model_path = str(model_file)
+            
+            logger.info("STT сервис инициализирован успешно")
+            
         except Exception as e:
-            logger.error(f"Ошибка загрузки STT модели: {str(e)}")
-            logger.info("Для первого запуска модель будет загружена автоматически")
-            self.model = None
+            logger.error(f"Ошибка инициализации STT: {e}")
+            # Fallback к простому распознаванию
+            self.session = None
+    
+    async def _download_file(self, url: str, filepath: Path):
+        """Загрузка файла с URL"""
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        with open(filepath, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
     
     async def transcribe_audio(self, audio_path: str) -> str:
         """
@@ -39,123 +77,61 @@ class STTService:
             Транскрибированный текст
         """
         try:
-            # Попытка инициализации модели если она не загружена
-            if not self.model:
-                self._initialize_model()
-                
-            if not self.model:
-                raise Exception("STT модель не может быть инициализирована")
+            if not self.session:
+                return await self._fallback_transcribe(audio_path)
             
-            if not os.path.exists(audio_path):
-                raise Exception(f"Аудио файл не найден: {audio_path}")
+            # Предобработка аудио
+            audio_data = await self._preprocess_audio(audio_path)
             
-            # Проверка и конвертация аудио файла если необходимо
-            processed_audio_path = await self._preprocess_audio(audio_path)
+            # Инференс модели
+            input_name = self.session.get_inputs()[0].name
+            outputs = self.session.run(None, {input_name: audio_data})
             
-            # Асинхронная транскрибация
-            loop = asyncio.get_event_loop()
-            transcription = await loop.run_in_executor(
-                None, 
-                self._transcribe_sync, 
-                processed_audio_path
-            )
+            # Декодирование результата
+            text = self._decode_output(outputs[0])
             
-            # Удаление временного файла если он был создан
-            if processed_audio_path != audio_path and os.path.exists(processed_audio_path):
-                os.remove(processed_audio_path)
-            
-            logger.info(f"Транскрибация завершена для файла: {audio_path}")
-            return transcription
+            logger.info(f"Транскрибация завершена: {text[:100]}...")
+            return text
             
         except Exception as e:
-            logger.error(f"Ошибка транскрибации: {str(e)}")
-            return f"Ошибка распознавания речи: {str(e)}"
+            logger.error(f"Ошибка транскрибации: {e}")
+            return await self._fallback_transcribe(audio_path)
     
-    async def _preprocess_audio(self, audio_path: str) -> str:
-        """
-        Предобработка аудио файла для модели
-        
-        Args:
-            audio_path: Путь к исходному аудио файлу
-            
-        Returns:
-            Путь к обработанному аудио файлу
-        """
+    async def _preprocess_audio(self, audio_path: str) -> np.ndarray:
+        """Предобработка аудио для модели"""
         try:
-            # Чтение аудио файла
-            audio_data, sample_rate = sf.read(audio_path)
+            # Загрузка аудио с помощью librosa
+            audio, sr = librosa.load(audio_path, sr=self.sample_rate)
             
-            # Конвертация в моно если стерео
-            if len(audio_data.shape) > 1:
-                audio_data = np.mean(audio_data, axis=1)
+            # Нормализация
+            audio = audio / np.max(np.abs(audio))
             
-            # Ресемплинг до 16kHz если необходимо
-            target_sample_rate = 16000
-            if sample_rate != target_sample_rate:
-                import librosa
-                audio_data = librosa.resample(audio_data, orig_sr=sample_rate, target_sr=target_sample_rate)
-                sample_rate = target_sample_rate
+            # Добавление batch dimension
+            audio = np.expand_dims(audio, axis=0)
             
-            # Нормализация амплитуды
-            if np.max(np.abs(audio_data)) > 0:
-                audio_data = audio_data / np.max(np.abs(audio_data))
-            
-            # Сохранение обработанного файла
-            processed_path = audio_path.replace('.', '_processed.')
-            sf.write(processed_path, audio_data, sample_rate)
-            
-            return processed_path
+            return audio.astype(np.float32)
             
         except Exception as e:
-            logger.warning(f"Ошибка предобработки аудио: {str(e)}, используется исходный файл")
-            return audio_path
+            logger.error(f"Ошибка предобработки аудио: {e}")
+            raise
     
-    def _transcribe_sync(self, audio_path: str) -> str:
-        """Синхронная транскрибация"""
+    def _decode_output(self, output: np.ndarray) -> str:
+        """Декодирование выхода модели в текст"""
         try:
-            result = self.model.recognize(audio_path)
-            return result if result else "Не удалось распознать речь"
+            if self.vocab is None:
+                return "Словарь не загружен"
+            
+            # Простое декодирование (может потребоваться более сложная логика)
+            tokens = np.argmax(output, axis=-1)
+            text_tokens = []
+            
+            for token_id in tokens[0]:  # Берем первый элемент batch
+                if token_id < len(self.vocab):
+                    token = self.vocab[token_id]
+                    if token not in ['<pad>', '<unk>', '<s>', '</s>']:
+                        text_tokens.append(token)
+            
+            return ' '.join(text_tokens)
         except Exception as e:
-            logger.error(f"Ошибка в синхронной транскрибации: {str(e)}")
-            return "Ошибка распознавания речи"
-    
-    async def transcribe_audio_stream(self, audio_data: bytes) -> str:
-        """
-        Транскрибация аудио потока
-        
-        Args:
-            audio_data: Байты аудио данных
-            
-        Returns:
-            Транскрибированный текст
-        """
-        try:
-            # Сохранение временного файла
-            temp_path = "temp_audio.wav"
-            with open(temp_path, "wb") as f:
-                f.write(audio_data)
-            
-            # Транскрибация
-            result = await self.transcribe_audio(temp_path)
-            
-            # Удаление временного файла
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Ошибка транскрибации потока: {str(e)}")
-            return f"Ошибка обработки аудио потока: {str(e)}"
-    
-    def is_model_ready(self) -> bool:
-        """Проверка готовности модели"""
-        return self.model is not None
-    
-    def get_model_info(self) -> dict:
-        """Получение информации о модели"""
-        return {
-            "model_name": self.model_name,
-            "is_ready": self.is_model_ready(),
-            "description": "NVIDIA Parakeet TDT 0.6B V3 (Multilingual) ONNX model"
-        }
+            logger.error(f"Ошибка декодирования: {e}")
+            return "Ошибка декодирования"

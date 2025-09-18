@@ -1,27 +1,42 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './Results.css';
 
 const Results = () => {
-  const location = useLocation();
+  const navigate = useNavigate();
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [sessionId, setSessionId] = useState(null);
 
   useEffect(() => {
-    // Получаем результаты из состояния роутера или загружаем с сервера
-    if (location.state && location.state.results) {
-      setResults(location.state.results);
+    const currentSessionId = localStorage.getItem('sessionId');
+    const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+    
+    if (!currentSessionId || !sessionData.resume_analyzed) {
+      navigate('/');
+      return;
+    }
+    
+    setSessionId(currentSessionId);
+    
+    // Load results from session data first
+    if (sessionData.resume_analysis || sessionData.interview_results || sessionData.coding_test_results) {
+      setResults({
+        resume_analysis: sessionData.resume_analysis,
+        interview_results: sessionData.interview_results,
+        coding_test_results: sessionData.coding_test_results
+      });
       setLoading(false);
     } else {
-      fetchResults();
+      fetchResults(currentSessionId);
     }
-  }, [location.state]);
+  }, [navigate]);
 
-  const fetchResults = async () => {
+  const fetchResults = async (sessionId) => {
     try {
-      const response = await axios.get('http://localhost:8000/api/results/latest');
+      const response = await axios.get(`/api/results/${sessionId}`);
       setResults(response.data);
     } catch (err) {
       setError('Ошибка при загрузке результатов');
@@ -32,8 +47,10 @@ const Results = () => {
   };
 
   const downloadReport = async () => {
+    if (!sessionId) return;
+    
     try {
-      const response = await axios.get('http://localhost:8000/api/report/download', {
+      const response = await axios.get(`/api/report/download/${sessionId}`, {
         responseType: 'blob'
       });
       
@@ -47,6 +64,12 @@ const Results = () => {
     } catch (err) {
       console.error('Error downloading report:', err);
     }
+  };
+
+  const startNewSession = () => {
+    localStorage.removeItem('sessionId');
+    localStorage.removeItem('sessionData');
+    navigate('/');
   };
 
   const getScoreColor = (score) => {
@@ -79,7 +102,7 @@ const Results = () => {
         <div className="error-container">
           <h2>Ошибка</h2>
           <p>{error}</p>
-          <Link to="/" className="btn btn-primary">Вернуться на главную</Link>
+          <button onClick={() => navigate('/')} className="btn btn-primary">Вернуться на главную</button>
         </div>
       </div>
     );
@@ -91,7 +114,7 @@ const Results = () => {
         <div className="no-results">
           <h2>Результаты не найдены</h2>
           <p>Пройдите собеседование, чтобы увидеть результаты</p>
-          <Link to="/" className="btn btn-primary">Начать собеседование</Link>
+          <button onClick={() => navigate('/')} className="btn btn-primary">Начать собеседование</button>
         </div>
       </div>
     );
@@ -105,9 +128,9 @@ const Results = () => {
           <button onClick={downloadReport} className="btn btn-download">
             Скачать отчет
           </button>
-          <Link to="/" className="btn btn-primary">
+          <button onClick={startNewSession} className="btn btn-primary">
             Пройти заново
-          </Link>
+          </button>
         </div>
       </div>
 

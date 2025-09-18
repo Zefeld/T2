@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './VoiceInterview.css';
 
 const VoiceInterview = () => {
+  const navigate = useNavigate();
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -19,6 +20,19 @@ const VoiceInterview = () => {
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  // Session validation
+  useEffect(() => {
+    const storedSessionId = localStorage.getItem('sessionId');
+    const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+    
+    if (!storedSessionId || !sessionData.resume_analyzed) {
+      navigate('/');
+      return;
+    }
+    
+    setSessionId(storedSessionId);
+  }, [navigate]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -229,9 +243,9 @@ const VoiceInterview = () => {
               <button onClick={checkMicrophonePermission} className="btn">
                 Разрешить доступ к микрофону
               </button>
-              <Link to="/interview" className="btn secondary-btn">
+              <button onClick={() => navigate('/interview')} className="btn secondary-btn">
                 Вернуться к текстовому интервью
-              </Link>
+              </button>
             </div>
           </div>
         </div>
@@ -372,12 +386,12 @@ const VoiceInterview = () => {
                     <p>Спасибо за участие. Ваши ответы анализируются...</p>
                   </div>
                   <div className="next-steps">
-                    <Link to="/coding-test" className="btn">
+                    <button onClick={() => navigate('/coding-test')} className="btn">
                       Выполнить тестовое задание
-                    </Link>
-                    <Link to="/results" className="btn secondary-btn">
+                    </button>
+                    <button onClick={() => navigate('/results')} className="btn secondary-btn">
                       Посмотреть результаты
-                    </Link>
+                    </button>
                   </div>
                 </div>
               )}

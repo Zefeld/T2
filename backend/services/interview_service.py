@@ -4,80 +4,49 @@ from typing import Dict, Any, List, Optional
 import json
 from datetime import datetime
 import uuid
-
-from .gemma_client import GemmaClient
-from .stt_service import STTService
-from .tts_service import TTSService
+import requests
 
 logger = logging.getLogger(__name__)
 
 class InterviewService:
     """Сервис проведения AI интервью"""
     
-    def __init__(self, gemma_client: GemmaClient, stt_service: STTService, tts_service: TTSService):
-        self.gemma_client = gemma_client
-        self.stt_service = stt_service
-        self.tts_service = tts_service
-        self.active_interviews = {}  # Хранение активных интервью
+    def __init__(self):
+        self.lm_studio_url = "http://localhost:1234/v1/chat/completions"
+        self.model_name = "gemma-2-2b-it"
+        self.question_count = 0
+        self.max_questions = 8
         
-    async def start_interview(self, candidate_id: str, resume_analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Начало интервью
-        
-        Args:
-            candidate_id: ID кандидата
-            resume_analysis: Результат анализа резюме
-            
-        Returns:
-            Информация о начатом интервью
-        """
+    async def start_interview(self, resume_analysis: Dict[str, Any]) -> str:
+        """Начало интервью на основе анализа резюме"""
         try:
-            interview_id = str(uuid.uuid4())
+            self.question_count = 0
             
-            # Создание контекста интервью
-            interview_context = {
-                'interview_id': interview_id,
-                'candidate_id': candidate_id,
-                'resume_analysis': resume_analysis,
-                'conversation_history': [],
-                'start_time': datetime.now().isoformat(),
-                'status': 'active',
-                'current_question_number': 0,
-                'total_questions_planned': 5,
-                'assessment_scores': []
-            }
+            # Формирование системного промпта
+            system_prompt = f"""
+            Ты опытный HR-интервьюер. Проводишь собеседование с кандидатом на основе его резюме.
             
-            # Сохранение в активных интервью
-            self.active_interviews[interview_id] = interview_context
+            Анализ резюме кандидата:
+            {json.dumps(resume_analysis, ensure_ascii=False, indent=2)}
             
-            # Генерация первого вопроса
-            first_question = await self._generate_opening_question(resume_analysis)
+            Твоя задача:
+            1. Задавать уточняющие вопросы о опыте работы
+            2. Проверять глубину знаний в указанных технологиях
+            3. Выяснять мотивацию и карьерные цели
+            4. Задавать каверзные вопросы для проверки честности
             
-            # Добавление в историю
-            interview_context['conversation_history'].append({
-                'role': 'assistant',
-                'content': first_question,
-                'timestamp': datetime.now().isoformat(),
-                'question_number': 1
-            })
+            Начни с приветствия и первого вопроса о мотивации кандидата.
+            Говори на русском языке. Будь дружелюбным, но профессиональным.
+            """
             
-            return {
-                'interview_id': interview_id,
-                'status': 'started',
-                'first_question': first_question,
-                'context': {
-                    'candidate_name': resume_analysis.get('personal_info', {}).get('name', 'Кандидат'),
-                    'position': resume_analysis.get('personal_info', {}).get('position', 'Не указано'),
-                    'total_questions': interview_context['total_questions_planned']
-                }
-            }
+            response = await self._call_llm(system_prompt, "Начни интервью")
+            self.question_count += 1
+            
+            return response
             
         except Exception as e:
-            logger.error(f"Ошибка начала интервью: {str(e)}")
-            return {
-                'error': True,
-                'message': f"Ошибка начала интервью: {str(e)}"
-            }
+            logger.error(f"Ошибка начала интервью: {e}")
+            return "Добро пожаловать на собеседование! Расскажите, пожалуйста, что мотивирует вас в работе?"
     
     async def process_text_response(self, interview_id: str, response_text: str) -> Dict[str, Any]:
         """
@@ -438,3 +407,190 @@ class InterviewService:
             del self.active_interviews[interview_id]
         
         logger.info(f"Очищено {len(to_remove)} завершенных интервью")
+    
+    async def process_answer(self, answer: str, resume_analysis: Dict[str, Any], conversation_history: str) -> str:
+        """Обработка ответа кандидата и генерация следующего вопроса"""
+        try:
+            if self.question_count >= self.max_questions:
+                return "Спасибо за интересные ответы! Интервью завершено. Переходим к тестовому заданию."
+            
+            system_prompt = f"""
+            Ты HR-интервьюер. Анализируй ответ кандидата и задай следующий вопрос.
+            
+            Анализ резюме:
+            {json.dumps(resume_analysis, ensure_ascii=False, indent=2)}
+            
+            История разговора:
+            {conversation_history}
+            
+            Последний ответ кандидата: {answer}
+            
+            Задай следующий вопрос, основываясь на:
+            1. Ответе кандидата
+            2. Его резюме
+            3. Необходимости углубиться в детали
+            
+            Вопрос должен быть конкретным и проверять профессиональные навыки.
+            Говори на русском языке.
+            """
+            
+            response = await self._call_llm(system_prompt, answer)
+            self.question_count += 1
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Ошибка обработки ответа: {e}")
+            return "Интересно. Расскажите подробнее о вашем опыте работы с технологиями из резюме."
+    
+    async def analyze_code(self, code: str, task_description: str) -> Dict[str, Any]:
+        """Анализ кода тестового задания"""
+        try:
+            system_prompt = f"""
+            Ты эксперт по программированию. Проанализируй код кандидата.
+            
+            Задание: {task_description}
+            
+            Код кандидата:
+            {code}
+            
+            Оцени код по критериям:
+            1. Корректность решения (0-10)
+            2. Качество кода (0-10)
+            3. Читаемость (0-10)
+            4. Эффективность (0-10)
+            5. Соответствие требованиям (0-10)
+            
+            Верни результат в JSON формате:
+            {{
+                "correctness": число,
+                "code_quality": число,
+                "readability": число,
+                "efficiency": число,
+                "requirements_compliance": число,
+                "total_score": число,
+                "feedback": "подробный отзыв",
+                "strengths": ["сильная сторона 1", "сильная сторона 2"],
+                "improvements": ["улучшение 1", "улучшение 2"]
+            }}
+            """
+            
+            response = await self._call_llm(system_prompt, code)
+            
+            # Попытка парсинга JSON
+            try:
+                result = json.loads(response)
+                return result
+            except json.JSONDecodeError:
+                # Если не удалось распарсить, возвращаем базовую оценку
+                return {
+                    "correctness": 7,
+                    "code_quality": 7,
+                    "readability": 7,
+                    "efficiency": 7,
+                    "requirements_compliance": 7,
+                    "total_score": 35,
+                    "feedback": response,
+                    "strengths": ["Код предоставлен"],
+                    "improvements": ["Требуется дополнительный анализ"]
+                }
+                
+        except Exception as e:
+            logger.error(f"Ошибка анализа кода: {e}")
+            return {
+                "correctness": 5,
+                "code_quality": 5,
+                "readability": 5,
+                "efficiency": 5,
+                "requirements_compliance": 5,
+                "total_score": 25,
+                "feedback": "Ошибка при анализе кода",
+                "strengths": [],
+                "improvements": ["Требуется повторная проверка"]
+            }
+    
+    async def generate_candidate_feedback(self, session_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Генерация обратной связи для кандидата"""
+        try:
+            system_prompt = f"""
+            Сгенерируй конструктивную обратную связь для кандидата на основе его прохождения интервью.
+            
+            Данные сессии:
+            {json.dumps(session_data, ensure_ascii=False, indent=2)}
+            
+            Создай обратную связь в JSON формате:
+            {{
+                "overall_impression": "общее впечатление",
+                "strengths": ["сильная сторона 1", "сильная сторона 2"],
+                "areas_for_improvement": ["область для улучшения 1", "область для улучшения 2"],
+                "recommendations": ["рекомендация 1", "рекомендация 2"],
+                "next_steps": "что делать дальше"
+            }}
+            
+            Будь конструктивным и поддерживающим.
+            """
+            
+            response = await self._call_llm(system_prompt, "Сгенерируй обратную связь")
+            
+            try:
+                return json.loads(response)
+            except json.JSONDecodeError:
+                return {
+                    "overall_impression": "Спасибо за участие в интервью",
+                    "strengths": ["Активное участие", "Готовность к диалогу"],
+                    "areas_for_improvement": ["Продолжайте развиваться"],
+                    "recommendations": ["Изучайте новые технологии"],
+                    "next_steps": "Ожидайте результатов"
+                }
+                
+        except Exception as e:
+            logger.error(f"Ошибка генерации обратной связи: {e}")
+            return {
+                "overall_impression": "Спасибо за участие",
+                "strengths": [],
+                "areas_for_improvement": [],
+                "recommendations": [],
+                "next_steps": "Ожидайте результатов"
+            }
+    
+    async def _call_llm(self, system_prompt: str, user_message: str) -> str:
+        """Вызов LLM через LM Studio API"""
+        try:
+            headers = {
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": self.model_name,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 500,
+                "stream": False
+            }
+            
+            # Асинхронный HTTP запрос
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, 
+                lambda: requests.post(self.lm_studio_url, headers=headers, json=data, timeout=30)
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"].strip()
+            else:
+                logger.error(f"LM Studio API error: {response.status_code} - {response.text}")
+                return "Извините, произошла техническая ошибка. Попробуйте еще раз."
+                
+        except requests.exceptions.ConnectionError:
+            logger.error("Не удается подключиться к LM Studio. Убедитесь, что сервер запущен на localhost:1234")
+            return "Техническая ошибка: сервер недоступен."
+        except requests.exceptions.Timeout:
+            logger.error("Таймаут при обращении к LM Studio")
+            return "Извините, запрос занял слишком много времени."
+        except Exception as e:
+            logger.error(f"Ошибка вызова LLM: {e}")
+            return "Произошла техническая ошибка."

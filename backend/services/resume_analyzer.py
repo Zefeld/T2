@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional
 import PyPDF2
+import fitz  # PyMuPDF
 import docx
 import io
 from pathlib import Path
@@ -117,7 +118,24 @@ class ResumeAnalyzer:
     
     async def _extract_from_pdf(self, file_content: bytes) -> str:
         """Извлечение текста из PDF"""
+        text = ""
+        
         try:
+            # Попытка с PyMuPDF (лучше для сложных PDF)
+            pdf_file = io.BytesIO(file_content)
+            doc = fitz.open(stream=pdf_file, filetype="pdf")
+            for page in doc:
+                text += page.get_text() + "\n"
+            doc.close()
+            
+            if text.strip():
+                return text.strip()
+                
+        except Exception as e:
+            logger.warning(f"PyMuPDF не смог обработать PDF: {str(e)}")
+        
+        try:
+            # Резервный вариант с PyPDF2
             pdf_file = io.BytesIO(file_content)
             pdf_reader = PyPDF2.PdfReader(pdf_file)
             
@@ -128,7 +146,7 @@ class ResumeAnalyzer:
             return text.strip()
             
         except Exception as e:
-            logger.error(f"Ошибка извлечения текста из PDF: {str(e)}")
+            logger.error(f"PyPDF2 не смог обработать PDF: {str(e)}")
             raise ValueError(f"Не удалось прочитать PDF файл: {str(e)}")
     
     async def _extract_from_docx(self, file_content: bytes) -> str:

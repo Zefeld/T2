@@ -1,16 +1,19 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 import os
 import json
 from typing import Dict, Any, List
 import uvicorn
+import tempfile
+import uuid
 
 from services.resume_analyzer import ResumeAnalyzer
 from services.interview_service import InterviewService
 from services.stt_service import STTService
 from services.tts_service import TTSService
+from services.session_manager import SessionManager
 
 app = FastAPI(title="AI Interview System", version="1.0.0")
 
@@ -24,10 +27,19 @@ app.add_middleware(
 )
 
 # Initialize services
-resume_analyzer = ResumeAnalyzer()
+from services.gemma_client import GemmaClient
+
+gemma_client = GemmaClient()
+resume_analyzer = ResumeAnalyzer(gemma_client)
 interview_service = InterviewService()
 stt_service = STTService()
 tts_service = TTSService()
+session_manager = SessionManager()
+
+# Создание необходимых директорий
+os.makedirs("uploads", exist_ok=True)
+os.makedirs("reports", exist_ok=True)
+os.makedirs("audio", exist_ok=True)
 
 # Pydantic models
 class InterviewMessage(BaseModel):
@@ -42,82 +54,137 @@ class TestSubmission(BaseModel):
 class VoiceMessage(BaseModel):
     session_id: str
 
+class SessionCreate(BaseModel):
+    candidate_name: str = "Неизвестный кандидат"
+
 @app.get("/")
 async def root():
     return {"message": "AI Interview System API", "version": "1.0.0"}
 
-@app.post("/api/upload-resume")
-async def upload_resume(file: UploadFile = File(...)):
-    """Загрузка и анализ резюме кандидата"""
+@app.post("/api/create-session")
+async def create_session(session_data: SessionCreate):
+    """Создание новой сессии интервью"""
     try:
-        if file.content_type != "application/pdf":
-            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+        session_id = session_manager.create_session(session_data.candidate_name)
+        return {
+            "success": True,
+            "session_id": session_id,
+            "message": "Сессия создана успешно"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка создания сессии: {str(e)}")
+
+@app.post("/api/upload-resume")
+async def upload_resume(file: UploadFile = File(...), session_id: str = Form(...)):
+    """Загрузка и анализ резюме"""
+    try:
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Не указан session_id")
+        
+        # Проверка типа файла
+        if not file.filename.lower().endswith(('.pdf', '.txt', '.docx')):
+            raise HTTPException(status_code=400, detail="Поддерживаются только PDF, TXT и DOCX файлы")
         
         # Сохранение файла
-        upload_path = f"uploads/{file.filename}"
-        os.makedirs("uploads", exist_ok=True)
-        
-        with open(upload_path, "wb") as buffer:
+        file_path = f"uploads/{session_id}_{file.filename}"
+        with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
         
         # Анализ резюме
-        analysis_result = await resume_analyzer.analyze_resume(upload_path)
+        analysis = await resume_analyzer.analyze_resume(file_path)
         
-        return JSONResponse(content={
-            "status": "success",
-            "filename": file.filename,
-            "analysis": analysis_result
-        })
-    
+        # Сохранение результата в сессии
+        session_manager.update_resume_analysis(session_id, analysis)
+        
+        # Удаление временного файла
+        try:
+            os.remove(file_path)
+        except:
+            pass
+        
+        return {
+            "success": True,
+            "analysis": analysis,
+            "message": "Резюме успешно проанализировано"
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing resume: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка анализа резюме: {str(e)}")
 
 @app.post("/api/start-interview")
 async def start_interview(session_data: Dict[str, Any]):
-    """Начало AI интервью"""
+    """Начало интервью"""
     try:
         session_id = session_data.get("session_id")
-        resume_analysis = session_data.get("resume_analysis", {})
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Не указан session_id")
         
-        interview_session = await interview_service.start_interview(session_id, resume_analysis)
+        # Получение данных сессии
+        session_info = session_manager.get_session_data(session_id)
+        if not session_info:
+            raise HTTPException(status_code=404, detail="Сессия не найдена")
         
-        return JSONResponse(content={
-            "status": "success",
-            "session_id": session_id,
-            "first_question": interview_session["first_question"]
-        })
-    
+        # Генерация первого вопроса
+        first_question = await interview_service.start_interview(session_info.get("resume_analysis", {}))
+        
+        # Сохранение вопроса в транскрипт
+        session_manager.add_interview_message(session_id, "Интервьюер", first_question)
+        
+        return {
+            "success": True,
+            "question": first_question,
+            "session_id": session_id
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error starting interview: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка начала интервью: {str(e)}")
 
 @app.post("/api/interview-message")
 async def process_interview_message(message: InterviewMessage):
-    """Обработка сообщения в текстовом интервью"""
+    """Обработка сообщения в интервью"""
     try:
-        response = await interview_service.process_message(
-            message.session_id, 
-            message.message
+        # Сохранение ответа кандидата
+        session_manager.add_interview_message(message.session_id, "Кандидат", message.message)
+        
+        # Получение данных сессии
+        session_info = session_manager.get_session_data(message.session_id)
+        if not session_info:
+            raise HTTPException(status_code=404, detail="Сессия не найдена")
+        
+        # Генерация следующего вопроса
+        next_question = await interview_service.process_answer(
+            message.message, 
+            session_info.get("resume_analysis", {}),
+            session_info.get("interview_transcript", "")
         )
         
-        return JSONResponse(content={
-            "status": "success",
-            "response": response["response"],
-            "is_complete": response.get("is_complete", False),
-            "analysis": response.get("analysis", {})
-        })
-    
+        # Сохранение вопроса в транскрипт
+        session_manager.add_interview_message(message.session_id, "Интервьюер", next_question)
+        
+        return {
+            "success": True,
+            "response": next_question
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки сообщения: {str(e)}")
 
 @app.post("/api/voice-interview")
 async def process_voice_message(file: UploadFile = File(...), session_id: str = ""):
     """Обработка голосового сообщения в интервью"""
     try:
-        # Сохранение аудио файла
-        audio_path = f"uploads/audio_{session_id}_{file.filename}"
-        os.makedirs("uploads", exist_ok=True)
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Не указан session_id")
         
+        # Сохранение аудио файла
+        audio_path = f"audio/{session_id}_{uuid.uuid4().hex}.wav"
         with open(audio_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
@@ -125,73 +192,114 @@ async def process_voice_message(file: UploadFile = File(...), session_id: str = 
         # Транскрибация речи
         transcription = await stt_service.transcribe_audio(audio_path)
         
-        # Обработка через интервью сервис
-        response = await interview_service.process_message(session_id, transcription)
+        # Сохранение ответа кандидата
+        session_manager.add_interview_message(session_id, "Кандидат", transcription)
         
-        # Генерация голосового ответа
-        audio_response_path = await tts_service.generate_speech(
-            response["response"], 
-            f"uploads/response_{session_id}.wav"
+        # Получение данных сессии
+        session_info = session_manager.get_session_data(session_id)
+        if not session_info:
+            raise HTTPException(status_code=404, detail="Сессия не найдена")
+        
+        # Генерация ответа
+        response_text = await interview_service.process_answer(
+            transcription,
+            session_info.get("resume_analysis", {}),
+            session_info.get("interview_transcript", "")
         )
         
-        return JSONResponse(content={
-            "status": "success",
+        # Сохранение ответа интервьюера
+        session_manager.add_interview_message(session_id, "Интервьюер", response_text)
+        
+        # Генерация аудио ответа
+        response_audio_path = f"audio/{session_id}_response_{uuid.uuid4().hex}.wav"
+        await tts_service.generate_speech(response_text, response_audio_path)
+        
+        # Очистка входного аудио файла
+        try:
+            os.remove(audio_path)
+        except:
+            pass
+        
+        return {
+            "success": True,
             "transcription": transcription,
-            "response": response["response"],
-            "audio_response": audio_response_path,
-            "is_complete": response.get("is_complete", False),
-            "analysis": response.get("analysis", {})
-        })
-    
+            "response": response_text,
+            "audio_url": f"/api/audio/{os.path.basename(response_audio_path)}"
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing voice message: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки голоса: {str(e)}")
+
+@app.get("/api/audio/{filename}")
+async def get_audio_file(filename: str):
+    """Получение аудио файла"""
+    file_path = f"audio/{filename}"
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="audio/wav")
+    else:
+        raise HTTPException(status_code=404, detail="Аудио файл не найден")
 
 @app.post("/api/submit-test")
 async def submit_test_assignment(submission: TestSubmission):
     """Отправка тестового задания"""
     try:
-        # Анализ кода через Gemma 3
-        code_analysis = await interview_service.analyze_code(
-            submission.code, 
-            submission.task_description
-        )
+        # Анализ кода
+        result = await interview_service.analyze_code(submission.code, submission.task_description)
         
-        return JSONResponse(content={
-            "status": "success",
-            "analysis": code_analysis,
-            "session_id": submission.session_id
-        })
-    
+        # Сохранение результата в сессии
+        session_manager.update_coding_test_result(submission.session_id, result)
+        
+        return {
+            "success": True,
+            "result": result,
+            "message": "Тестовое задание успешно проанализировано"
+        }
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error analyzing code: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка анализа кода: {str(e)}")
 
 @app.get("/api/session-report/{session_id}")
 async def get_session_report(session_id: str):
-    """Получение полного отчета по сессии"""
+    """Получение отчета по сессии для работодателя"""
     try:
-        report = await interview_service.generate_final_report(session_id)
+        report = session_manager.generate_final_report(session_id)
         
-        return JSONResponse(content={
-            "status": "success",
+        if not report:
+            raise HTTPException(status_code=404, detail="Сессия не найдена")
+        
+        return {
+            "success": True,
             "report": report
-        })
-    
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating report: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка генерации отчета: {str(e)}")
 
 @app.get("/api/candidate-feedback/{session_id}")
 async def get_candidate_feedback(session_id: str):
     """Получение обратной связи для кандидата"""
     try:
-        feedback = await interview_service.generate_candidate_feedback(session_id)
+        session_data = session_manager.get_session_data(session_id)
         
-        return JSONResponse(content={
-            "status": "success",
+        if not session_data:
+            raise HTTPException(status_code=404, detail="Сессия не найдена")
+        
+        # Генерация обратной связи
+        feedback = await interview_service.generate_candidate_feedback(session_data)
+        
+        return {
+            "success": True,
             "feedback": feedback
-        })
-    
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating feedback: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка генерации обратной связи: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

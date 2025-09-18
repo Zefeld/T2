@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './Interview.css';
 
@@ -11,6 +11,7 @@ const Interview = () => {
   const [interviewCompleted, setInterviewCompleted] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const messagesEndRef = useRef(null);
+  const navigate = useNavigate();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -20,17 +21,39 @@ const Interview = () => {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    const currentSessionId = localStorage.getItem('sessionId');
+    const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+    
+    if (!currentSessionId || !sessionData.resume_analyzed) {
+      navigate('/');
+      return;
+    }
+    
+    setSessionId(currentSessionId);
+  }, [navigate]);
+
   const startInterview = async () => {
+    if (!sessionId) return;
+    
     setLoading(true);
     try {
-      const response = await axios.post('/api/interview/start');
-      setSessionId(response.data.session_id);
+      const response = await axios.post('/api/interview/start', {
+        session_id: sessionId
+      });
+      
       setMessages([{
         role: 'assistant',
         content: response.data.first_question,
         timestamp: new Date().toISOString()
       }]);
       setInterviewStarted(true);
+      
+      // Update session data
+      const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+      sessionData.interview_started = true;
+      localStorage.setItem('sessionData', JSON.stringify(sessionData));
+      
     } catch (error) {
       console.error('Error starting interview:', error);
       setMessages([{
@@ -96,15 +119,31 @@ const Interview = () => {
   const completeInterview = async () => {
     setLoading(true);
     try {
-      await axios.post('/api/interview/complete', {
+      const response = await axios.post('/api/interview/complete', {
         session_id: sessionId
       });
+      
       setInterviewCompleted(true);
+      
+      // Update session data
+      const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+      sessionData.interview_completed = true;
+      sessionData.interview_results = response.data;
+      localStorage.setItem('sessionData', JSON.stringify(sessionData));
+      
     } catch (error) {
       console.error('Error completing interview:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const proceedToResults = () => {
+    navigate('/results');
+  };
+
+  const proceedToCodingTest = () => {
+    navigate('/coding-test');
   };
 
   return (
@@ -217,15 +256,12 @@ const Interview = () => {
                     <p>Спасибо за ваши ответы. Результаты обрабатываются...</p>
                   </div>
                   <div className="next-steps">
-                    <Link to="/voice-interview" className="btn">
-                      Перейти к голосовому интервью
-                    </Link>
-                    <Link to="/coding-test" className="btn secondary-btn">
-                      Выполнить тестовое задание
-                    </Link>
-                    <Link to="/results" className="btn secondary-btn">
+                    <button onClick={proceedToResults} className="btn">
                       Посмотреть результаты
-                    </Link>
+                    </button>
+                    <button onClick={proceedToCodingTest} className="btn secondary-btn">
+                      Выполнить тестовое задание
+                    </button>
                   </div>
                 </div>
               )}

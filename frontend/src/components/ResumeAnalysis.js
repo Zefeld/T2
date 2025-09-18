@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './ResumeAnalysis.css';
 
@@ -9,6 +9,17 @@ const ResumeAnalysis = () => {
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const currentSessionId = localStorage.getItem('sessionId');
+    if (!currentSessionId) {
+      navigate('/');
+      return;
+    }
+    setSessionId(currentSessionId);
+  }, [navigate]);
 
   const onDrop = useCallback((acceptedFiles) => {
     const uploadedFile = acceptedFiles[0];
@@ -29,13 +40,14 @@ const ResumeAnalysis = () => {
   });
 
   const analyzeResume = async () => {
-    if (!file) return;
+    if (!file || !sessionId) return;
 
     setLoading(true);
     setError(null);
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('session_id', sessionId);
 
     try {
       const response = await axios.post('/api/analyze-resume', formData, {
@@ -44,6 +56,13 @@ const ResumeAnalysis = () => {
         },
       });
       setAnalysis(response.data);
+      
+      // Update session data
+      const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+      sessionData.resume_analyzed = true;
+      sessionData.resume_analysis = response.data;
+      localStorage.setItem('sessionData', JSON.stringify(sessionData));
+      
     } catch (err) {
       setError('Ошибка при анализе резюме. Попробуйте еще раз.');
       console.error('Resume analysis error:', err);
@@ -56,6 +75,14 @@ const ResumeAnalysis = () => {
     setFile(null);
     setAnalysis(null);
     setError(null);
+  };
+
+  const proceedToInterview = () => {
+    navigate('/interview');
+  };
+
+  const proceedToCodingTest = () => {
+    navigate('/coding-test');
   };
 
   return (
@@ -188,12 +215,12 @@ const ResumeAnalysis = () => {
             <div className="next-steps">
               <h4>Следующие шаги</h4>
               <div className="steps-buttons">
-                <Link to="/interview" className="btn">
+                <button onClick={proceedToInterview} className="btn">
                   Перейти к интервью
-                </Link>
-                <Link to="/coding-test" className="btn secondary-btn">
+                </button>
+                <button onClick={proceedToCodingTest} className="btn secondary-btn">
                   Выполнить тестовое задание
-                </Link>
+                </button>
               </div>
             </div>
           </div>

@@ -1,41 +1,117 @@
 .home-page {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 2rem 0;
+}
+
+.container {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 2rem;
 }
 
 .welcome-section {
   text-align: center;
-  margin-bottom: 50px;
+  margin-bottom: 3rem;
+  color: white;
 }
 
 .welcome-section h2 {
   font-size: 2.5rem;
-  color: white;
-  margin-bottom: 16px;
-  font-weight: 700;
+  margin-bottom: 1rem;
+  font-weight: 300;
 }
 
 .welcome-section p {
   font-size: 1.2rem;
-  color: rgba(255, 255, 255, 0.9);
-  max-width: 600px;
-  margin: 0 auto;
-  line-height: 1.6;
+  opacity: 0.9;
+  margin-bottom: 2rem;
+}
+
+.error-message {
+  background: rgba(255, 107, 107, 0.9);
+  color: white;
+  padding: 1rem;
+  border-radius: 8px;
+  margin: 1rem 0;
+  text-align: center;
+}
+
+.session-controls {
+  margin: 2rem 0;
+}
+
+.session-info {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1.5rem;
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.session-info p {
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+.session-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.btn {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-decoration: none;
+  display: inline-block;
+  text-align: center;
+}
+
+.primary-btn {
+  background: #4CAF50;
+  color: white;
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: #45a049;
+  transform: translateY(-2px);
+}
+
+.secondary-btn {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .steps-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: 30px;
-  margin-bottom: 50px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  margin-bottom: 3rem;
 }
 
 .step-card {
-  background: white;
+  background: rgba(255, 255, 255, 0.95);
   border-radius: 16px;
-  padding: 30px;
+  padding: 2rem;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
@@ -48,113 +124,144 @@
   left: 0;
   right: 0;
   height: 4px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #ddd;
+  transition: all 0.3s ease;
 }
 
-.step-card:hover {
-  transform: translateY(-8px);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
+.step-card.active::before {
+  background: #2196F3;
+}
+
+.step-card.completed::before {
+  background: #4CAF50;
+}
+
+.step-card.available::before {
+  background: #FF9800;
+}
+
+.step-card.pending {
+  opacity: 0.7;
+}
+
+.step-card:hover:not(.pending) {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
 }
 
 .step-number {
-  width: 60px;
-  height: 60px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  width: 50px;
+  height: 50px;
   border-radius: 50%;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 1.5rem;
   font-weight: bold;
-  margin-bottom: 20px;
+  margin-bottom: 1.5rem;
+}
+
+.step-card.completed .step-number {
+  background: #4CAF50;
+}
+
+.step-card.active .step-number {
+  background: #2196F3;
+}
+
+.step-card.available .step-number {
+  background: #FF9800;
 }
 
 .step-content h3 {
-  font-size: 1.5rem;
   color: #333;
-  margin-bottom: 12px;
-  font-weight: 600;
+  margin-bottom: 1rem;
+  font-size: 1.4rem;
 }
 
 .step-content p {
   color: #666;
   line-height: 1.6;
-  margin-bottom: 24px;
-  font-size: 1rem;
+  margin-bottom: 1.5rem;
 }
 
 .step-btn {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
   width: 100%;
-  padding: 14px 24px;
-  font-size: 1.1rem;
-  font-weight: 600;
-  border-radius: 10px;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.step-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.step-card.completed .step-btn {
+  background: #4CAF50;
+}
+
+.step-card.active .step-btn {
+  background: #2196F3;
+}
+
+.step-card.available .step-btn {
+  background: #FF9800;
 }
 
 .info-section {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 30px;
-  margin-top: 40px;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 2rem;
+  margin-top: 3rem;
 }
 
 .info-card {
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 2rem;
+  border-radius: 12px;
+  text-align: center;
   backdrop-filter: blur(10px);
-  border-radius: 16px;
-  padding: 30px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
 }
 
 .info-card h4 {
-  font-size: 1.3rem;
   color: #333;
-  margin-bottom: 16px;
-  font-weight: 600;
+  margin-bottom: 1rem;
+  font-size: 1.2rem;
 }
 
-.info-card ul {
-  list-style: none;
-  padding: 0;
-}
-
-.info-card li {
-  color: #555;
-  margin-bottom: 8px;
-  padding-left: 20px;
-  position: relative;
-  line-height: 1.5;
-}
-
-.info-card li::before {
-  content: '✓';
-  position: absolute;
-  left: 0;
-  color: #667eea;
-  font-weight: bold;
+.info-card p {
+  color: #666;
+  line-height: 1.6;
 }
 
 @media (max-width: 768px) {
+  .container {
+    padding: 0 1rem;
+  }
+  
   .welcome-section h2 {
     font-size: 2rem;
   }
   
-  .welcome-section p {
-    font-size: 1.1rem;
-  }
-  
   .steps-grid {
     grid-template-columns: 1fr;
-    gap: 20px;
+    gap: 1.5rem;
+  }
+  
+  .session-buttons {
+    flex-direction: column;
   }
   
   .step-card {
-    padding: 24px;
-  }
-  
-  .info-section {
-    grid-template-columns: 1fr;
-    gap: 20px;
+    padding: 1.5rem;
   }
 }

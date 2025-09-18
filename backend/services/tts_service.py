@@ -6,44 +6,141 @@ import wave
 import io
 import subprocess
 import tempfile
+import json
+import requests
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 class TTSService:
-    """Сервис для синтеза речи с использованием Piper TTS"""
+    """Сервис синтеза речи с использованием Piper TTS"""
     
     def __init__(self):
-        self.piper_executable = None
-        self.model_path = "models/piper/ru_RU-ruslan-medium.onnx"
-        self.config_path = "models/piper/ru_RU-ruslan-medium.onnx.json"
-        self._initialize_piper()
-    
-    def _initialize_piper(self):
-        """Инициализация Piper TTS"""
+        self.piper_path = None
+        self.model_path = None
+        self.voice_name = "ru_RU-ruslan-medium"
+        self.sample_rate = 22050
+        self.models_dir = Path("models/tts")
+        
+    async def initialize(self):
+        """Инициализация TTS сервиса"""
         try:
-            # Создание директории для моделей если не существует
-            os.makedirs("models/piper", exist_ok=True)
+            # Создание директории для моделей
+            self.models_dir.mkdir(parents=True, exist_ok=True)
             
-            # Проверка установки piper-tts
-            result = subprocess.run(['piper', '--help'], 
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                self.piper_executable = 'piper'
-                logger.info("Piper TTS найден в системе")
-            else:
-                logger.warning("Piper TTS не найден в PATH")
-                
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
-            logger.warning(f"Piper TTS недоступен: {str(e)}")
-            logger.info("Установите piper-tts: pip install piper-tts")
-            self.piper_executable = None
+            # Проверка установки Piper
+            await self._ensure_piper_installed()
+            
+            # Загрузка модели голоса
+            await self._download_voice_model()
+            
+            logger.info("TTS сервис инициализирован успешно")
+            
         except Exception as e:
-            logger.error(f"Ошибка инициализации TTS: {str(e)}")
-            self.piper_executable = None
+            logger.error(f"Ошибка инициализации TTS: {e}")
+            self.piper_path = None
     
-    async def generate_speech(self, text: str, output_path: str) -> str:
+    async def _ensure_piper_installed(self):
+        """Проверка и установка Piper TTS"""
+        try:
+            # Проверка установки через pip
+            result = subprocess.run(
+                ["python", "-m", "pip", "show", "piper-tts"],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                logger.info("Установка Piper TTS...")
+                install_result = subprocess.run(
+                    ["python", "-m", "pip", "install", "piper-tts"],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if install_result.returncode != 0:
+                    raise Exception(f"Ошибка установки Piper TTS: {install_result.stderr}")
+            
+            # Поиск исполняемого файла piper
+            try:
+                piper_result = subprocess.run(
+                    ["piper", "--version"],
+                    capture_output=True,
+                    text=True
+                )
+                if piper_result.returncode == 0:
+                    self.piper_path = "piper"
+                else:
+                    # Попытка найти через python -m
+                    self.piper_path = ["python", "-m", "piper"]
+            except FileNotFoundError:
+                self.piper_path = ["python", "-m", "piper"]
+                
+        except Exception as e:
+            logger.error(f"Ошибка проверки Piper: {e}")
+            raise
+    
+    def _download_default_model(self):
+        """Загрузка модели по умолчанию если она отсутствует"""
+        try:
+            if not os.path.exists(self.model_path):
+                logger.info(f"Загрузка модели TTS: {self.default_voice}")
+                # Команда для загрузки модели через piper
+                result = subprocess.run([
+                    'piper', '--model', self.default_voice, 
+                    '--download-dir', 'models/piper',
+                    '--data-dir', 'models/piper'
+                ], capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    logger.info("Модель TTS успешно загружена")
+                else:
+                    logger.warning(f"Не удалось загрузить модель: {result.stderr}")
+        except Exception as e:
+            logger.warning(f"Ошибка загрузки модели TTS: {str(e)}")
+    
+    async def _download_voice_model(self):
+        """Загрузка модели голоса"""
+        try:
+            model_file = self.models_dir / f"{self.voice_name}.onnx"
+            config_file = self.models_dir / f"{self.voice_name}.onnx.json"
+            
+            if not model_file.exists() or not config_file.exists():
+                logger.info(f"Загрузка модели голоса {self.voice_name}...")
+                
+                # URL для загрузки модели (может потребоваться обновление)
+                base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/ru/ru_RU/ruslan/medium/"
+                
+                model_url = base_url + f"{self.voice_name}.onnx"
+                config_url = base_url + f"{self.voice_name}.onnx.json"
+                
+                # Загрузка файлов
+                await self._download_file(model_url, model_file)
+                await self._download_file(config_url, config_file)
+            
+            self.model_path = str(model_file)
+            
+        except Exception as e:
+            logger.warning(f"Ошибка загрузки модели: {e}")
+            # Fallback к базовой модели
+            self.model_path = None
+    
+    async def _download_file(self, url: str, filepath: Path):
+        """Загрузка файла с URL"""
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+            
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        except Exception as e:
+            logger.error(f"Ошибка загрузки {url}: {e}")
+            raise
+    
+    async def generate_speech(self, text: str, output_path: Optional[str] = None) -> str:
         """
-        Генерация речи из текста
+        Синтез речи из текста
         
         Args:
             text: Текст для синтеза
@@ -53,32 +150,46 @@ class TTSService:
             Путь к созданному аудио файлу
         """
         try:
-            # Создание директории если не существует
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            if not self.piper_path:
+                return await self._fallback_synthesize(text, output_path)
             
-            if not self.piper_executable:
-                # Fallback: создание пустого аудио файла
-                await self._create_silence_audio(output_path, duration=len(text) * 0.1)
-                logger.warning("TTS недоступен, создан файл с тишиной")
-                return output_path
+            # Создание временного файла если путь не указан
+            if not output_path:
+                temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                output_path = temp_file.name
+                temp_file.close()
             
-            # Асинхронная генерация речи через subprocess
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                self._synthesize_with_piper,
-                text,
-                output_path
+            # Подготовка команды
+            if isinstance(self.piper_path, list):
+                cmd = self.piper_path.copy()
+            else:
+                cmd = [self.piper_path]
+            
+            if self.model_path:
+                cmd.extend(["--model", self.model_path])
+            
+            cmd.extend(["--output_file", output_path])
+            
+            # Выполнение синтеза
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
             )
             
-            logger.info(f"Речь синтезирована и сохранена: {output_path}")
+            stdout, stderr = process.communicate(input=text)
+            
+            if process.returncode != 0:
+                raise Exception(f"Ошибка Piper TTS: {stderr}")
+            
+            logger.info(f"Синтез речи завершен: {output_path}")
             return output_path
             
         except Exception as e:
-            logger.error(f"Ошибка синтеза речи: {str(e)}")
-            # Создание файла с тишиной в случае ошибки
-            await self._create_silence_audio(output_path, duration=len(text) * 0.1)
-            return output_path
+            logger.error(f"Ошибка синтеза речи: {e}")
+            return await self._fallback_synthesize(text, output_path)
     
     def _synthesize_with_piper(self, text: str, output_path: str):
         """Синтез речи через Piper CLI"""
@@ -147,31 +258,6 @@ class TTSService:
         except Exception as e:
             logger.error(f"Ошибка генерации потока: {str(e)}")
             return await self._create_silence_bytes(duration=len(text) * 0.1)
-            
-        Returns:
-            Аудио данные в виде байтов
-        """
-        try:
-            if not self.voice_model:
-                return await self._create_silence_bytes(duration=1.0)
-            
-            # Создание временного файла
-            temp_path = "temp_tts_output.wav"
-            await self.generate_speech(text, temp_path)
-            
-            # Чтение файла в байты
-            with open(temp_path, "rb") as f:
-                audio_bytes = f.read()
-            
-            # Удаление временного файла
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            
-            return audio_bytes
-            
-        except Exception as e:
-            logger.error(f"Ошибка генерации аудио потока: {str(e)}")
-            return await self._create_silence_bytes(duration=1.0)
     
     async def _create_silence_audio(self, output_path: str, duration: float = 1.0):
         """Создание файла с тишиной"""
@@ -211,16 +297,17 @@ class TTSService:
             return b''
     
     def is_model_ready(self) -> bool:
-        """Проверка готовности модели"""
-        return self.voice_model is not None
-    
+        """Проверка готовности TTS сервиса"""
+        return self.piper_path is not None
+
     def get_model_info(self) -> dict:
-        """Получение информации о модели"""
+        """Информация о TTS сервисе"""
         return {
+            "service_name": "Piper TTS",
+            "voice_name": self.voice_name,
+            "sample_rate": self.sample_rate,
             "model_path": self.model_path,
-            "is_ready": self.is_model_ready(),
-            "description": "Piper TTS - Neural Text-to-Speech",
-            "voice": "ru_RU-ruslan-medium"
+            "ready": self.is_model_ready()
         }
     
     def download_model_instructions(self) -> dict:

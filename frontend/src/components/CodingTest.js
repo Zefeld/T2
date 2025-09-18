@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './CodingTest.css';
 
@@ -13,6 +13,19 @@ const CodingTest = () => {
   const [testCompleted, setTestCompleted] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [sessionId, setSessionId] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const currentSessionId = localStorage.getItem('sessionId');
+    const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+    
+    if (!currentSessionId || !sessionData.resume_analyzed) {
+      navigate('/');
+      return;
+    }
+    
+    setSessionId(currentSessionId);
+  }, [navigate]);
 
   useEffect(() => {
     let timer;
@@ -37,17 +50,24 @@ const CodingTest = () => {
   };
 
   const startTest = async () => {
+    if (!sessionId) return;
+    
     setLoading(true);
     try {
       const response = await axios.post('/api/coding-test/start', {
+        session_id: sessionId,
         language: language
       });
       
       setTestData(response.data);
-      setSessionId(response.data.session_id);
       setCode(response.data.starter_code || '');
       setTimeLeft(response.data.time_limit || 1800); // 30 минут по умолчанию
       setTestStarted(true);
+      
+      // Update session data
+      const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+      sessionData.coding_test_started = true;
+      localStorage.setItem('sessionData', JSON.stringify(sessionData));
     } catch (error) {
       console.error('Error starting test:', error);
     } finally {
@@ -87,11 +107,22 @@ const CodingTest = () => {
       
       setTestResults(response.data);
       setTestCompleted(true);
+      
+      // Update session data
+      const sessionData = JSON.parse(localStorage.getItem('sessionData') || '{}');
+      sessionData.coding_test_completed = true;
+      sessionData.coding_test_results = response.data;
+      localStorage.setItem('sessionData', JSON.stringify(sessionData));
+      
     } catch (error) {
       console.error('Error submitting test:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const proceedToResults = () => {
+    navigate('/results');
   };
 
   const handleCodeChange = (e) => {
@@ -313,12 +344,12 @@ const CodingTest = () => {
               <p>Ваше решение отправлено на проверку. Результаты будут доступны в итоговом отчете.</p>
             </div>
             <div className="next-steps">
-              <Link to="/results" className="btn">
+              <button onClick={proceedToResults} className="btn">
                 Посмотреть результаты
-              </Link>
-              <Link to="/" className="btn secondary-btn">
+              </button>
+              <button onClick={() => navigate('/')} className="btn secondary-btn">
                 Вернуться на главную
-              </Link>
+              </button>
             </div>
           </div>
         )}
