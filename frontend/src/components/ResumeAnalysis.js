@@ -50,7 +50,7 @@ const ResumeAnalysis = () => {
     formData.append('session_id', sessionId);
 
     try {
-      const response = await axios.post('/api/analyze-resume', formData, {
+      const response = await axios.post('/api/upload-resume', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },

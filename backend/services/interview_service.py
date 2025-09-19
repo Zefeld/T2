@@ -16,39 +16,149 @@ class InterviewService:
         self.model_name = "gemma-2-2b-it"
         self.question_count = 0
         self.max_questions = 8
+        self.active_interviews = {}
+        
+        # Заранее прописанные вопросы для собеседования
+        self.predefined_questions = [
+            "Расскажите о себе и своем профессиональном опыте.",
+            "Почему вы заинтересованы в этой позиции?",
+            "Какие ваши сильные и слабые стороны?",
+            "Расскажите о самом сложном проекте, над которым вы работали.",
+            "Как вы справляетесь со стрессом и дедлайнами?",
+            "Где вы видите себя через 5 лет?",
+            "Почему вы хотите сменить работу?",
+            "Какие технологии вы изучали недавно и почему?",
+            "Расскажите о ситуации, когда вам пришлось работать в команде.",
+            "Какие вопросы у вас есть к нам?"
+        ]
         
     async def start_interview(self, resume_analysis: Dict[str, Any]) -> str:
         """Начало интервью на основе анализа резюме"""
         try:
             self.question_count = 0
             
-            # Формирование системного промпта
+            # Используем первый заранее прописанный вопрос
+            first_question = self.predefined_questions[0]
+            
+            # Формирование системного промпта с заранее прописанными вопросами
             system_prompt = f"""
             Ты опытный HR-интервьюер. Проводишь собеседование с кандидатом на основе его резюме.
             
             Анализ резюме кандидата:
             {json.dumps(resume_analysis, ensure_ascii=False, indent=2)}
             
-            Твоя задача:
-            1. Задавать уточняющие вопросы о опыте работы
-            2. Проверять глубину знаний в указанных технологиях
-            3. Выяснять мотивацию и карьерные цели
-            4. Задавать каверзные вопросы для проверки честности
+            У тебя есть список заранее подготовленных вопросов:
+            {json.dumps(self.predefined_questions, ensure_ascii=False, indent=2)}
             
-            Начни с приветствия и первого вопроса о мотивации кандидата.
+            Твоя задача:
+            1. Использовать заранее подготовленные вопросы как основу
+            2. Адаптировать вопросы под конкретного кандидата
+            3. Задавать уточняющие вопросы на основе ответов
+            4. Проверять глубину знаний в указанных технологиях
+            5. Выяснять мотивацию и карьерные цели
+            
+            Начни с приветствия и первого вопроса: "{first_question}"
             Говори на русском языке. Будь дружелюбным, но профессиональным.
             """
             
-            response = await self._call_llm(system_prompt, "Начни интервью")
-            self.question_count += 1
-            
-            return response
+            try:
+                response = await self._call_llm(system_prompt, "Начни интервью")
+                self.question_count += 1
+                return response
+            except Exception as llm_error:
+                logger.warning(f"LLM недоступен, используем заранее прописанный вопрос: {llm_error}")
+                return f"Добро пожаловать на собеседование! {first_question}"
             
         except Exception as e:
             logger.error(f"Ошибка начала интервью: {e}")
-            return "Добро пожаловать на собеседование! Расскажите, пожалуйста, что мотивирует вас в работе?"
+            return f"Добро пожаловать на собеседование! {self.predefined_questions[0]}"
     
-    async def process_text_response(self, interview_id: str, response_text: str) -> Dict[str, Any]:
+    async def process_message(self, session_id: str, message: str) -> Dict[str, Any]:
+        """
+        Обработка сообщения в рамках интервью
+        
+        Args:
+            session_id: ID сессии
+            message: Сообщение от кандидата
+            
+        Returns:
+            Ответ интервьюера
+        """
+        try:
+            # Проверяем, есть ли активное интервью для этой сессии
+            if session_id not in self.active_interviews:
+                # Создаем новое интервью
+                self.active_interviews[session_id] = {
+                    'session_id': session_id,
+                    'start_time': datetime.now().isoformat(),
+                    'conversation_history': [],
+                    'current_question_index': 0,
+                    'status': 'active'
+                }
+            
+            interview_context = self.active_interviews[session_id]
+            
+            # Добавляем сообщение кандидата в историю
+            interview_context['conversation_history'].append({
+                'role': 'user',
+                'content': message,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # Определяем следующий вопрос
+            current_index = interview_context['current_question_index']
+            
+            # Если это первое сообщение, начинаем с приветствия
+            if len(interview_context['conversation_history']) == 1:
+                response = f"Добро пожаловать на собеседование! {self.predefined_questions[0]}"
+            elif current_index < len(self.predefined_questions) - 1:
+                # Переходим к следующему вопросу
+                interview_context['current_question_index'] += 1
+                next_question = self.predefined_questions[interview_context['current_question_index']]
+                
+                try:
+                    # Пытаемся получить персонализированный ответ от LLM
+                    system_prompt = f"""
+                    Ты HR-интервьюер. Кандидат ответил: "{message}"
+                    
+                    Следующий запланированный вопрос: "{next_question}"
+                    
+                    Дай краткий комментарий к ответу кандидата (1-2 предложения) и задай следующий вопрос.
+                    Говори на русском языке, будь дружелюбным и профессиональным.
+                    """
+                    
+                    response = await self._call_llm(system_prompt, message)
+                except Exception as llm_error:
+                    logger.warning(f"LLM недоступен: {llm_error}")
+                    response = f"Спасибо за ответ. {next_question}"
+            else:
+                # Завершаем интервью
+                interview_context['status'] = 'completed'
+                interview_context['end_time'] = datetime.now().isoformat()
+                response = "Спасибо за интересное интервью! Мы свяжемся с вами в ближайшее время."
+            
+            # Добавляем ответ интервьюера в историю
+            interview_context['conversation_history'].append({
+                'role': 'assistant',
+                'content': response,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            return {
+                'success': True,
+                'response': response,
+                'status': interview_context['status'],
+                'question_number': interview_context['current_question_index'] + 1,
+                'total_questions': len(self.predefined_questions)
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка обработки сообщения: {e}")
+            return {
+                'success': False,
+                'response': "Извините, произошла ошибка. Можете повторить ваш ответ?",
+                'error': str(e)
+            }
         """
         Обработка текстового ответа кандидата
         
@@ -411,11 +521,18 @@ class InterviewService:
     async def process_answer(self, answer: str, resume_analysis: Dict[str, Any], conversation_history: str) -> str:
         """Обработка ответа кандидата и генерация следующего вопроса"""
         try:
-            if self.question_count >= self.max_questions:
-                return "Спасибо за интересные ответы! Интервью завершено. Переходим к тестовому заданию."
+            self.question_count += 1
             
+            # Если достигли максимального количества вопросов
+            if self.question_count >= len(self.predefined_questions):
+                return "Спасибо за ответы! Собеседование завершено. У вас есть вопросы к нам?"
+            
+            # Получаем следующий заранее прописанный вопрос
+            next_question = self.predefined_questions[self.question_count]
+            
+            # Формирование контекста для LLM
             system_prompt = f"""
-            Ты HR-интервьюер. Анализируй ответ кандидата и задай следующий вопрос.
+            Ты опытный HR-интервьюер. Анализируешь ответ кандидата и задаешь следующий вопрос.
             
             Анализ резюме:
             {json.dumps(resume_analysis, ensure_ascii=False, indent=2)}
@@ -425,23 +542,30 @@ class InterviewService:
             
             Последний ответ кандидата: {answer}
             
-            Задай следующий вопрос, основываясь на:
-            1. Ответе кандидата
-            2. Его резюме
-            3. Необходимости углубиться в детали
+            Следующий запланированный вопрос: "{next_question}"
             
-            Вопрос должен быть конкретным и проверять профессиональные навыки.
-            Говори на русском языке.
+            Твоя задача:
+            1. Кратко прокомментировать ответ кандидата (1-2 предложения)
+            2. Задать следующий вопрос, адаптировав его под контекст разговора
+            3. При необходимости задать уточняющий вопрос вместо запланированного
+            
+            Говори на русском языке. Будь дружелюбным, но профессиональным.
             """
             
-            response = await self._call_llm(system_prompt, answer)
-            self.question_count += 1
-            
-            return response
-            
+            try:
+                response = await self._call_llm(system_prompt, f"Проанализируй ответ и задай следующий вопрос")
+                return response
+            except Exception as llm_error:
+                logger.warning(f"LLM недоступен, используем заранее прописанный вопрос: {llm_error}")
+                return f"Понятно, спасибо за ответ. {next_question}"
+                
         except Exception as e:
             logger.error(f"Ошибка обработки ответа: {e}")
-            return "Интересно. Расскажите подробнее о вашем опыте работы с технологиями из резюме."
+            # Fallback к заранее прописанным вопросам
+            if self.question_count < len(self.predefined_questions):
+                return f"Спасибо за ответ. {self.predefined_questions[self.question_count]}"
+            else:
+                return "Спасибо за все ответы! Собеседование завершено."
     
     async def analyze_code(self, code: str, task_description: str) -> Dict[str, Any]:
         """Анализ кода тестового задания"""
@@ -554,43 +678,46 @@ class InterviewService:
             }
     
     async def _call_llm(self, system_prompt: str, user_message: str) -> str:
-        """Вызов LLM через LM Studio API"""
+        """Вызов LLM для генерации ответа"""
         try:
-            headers = {
-                "Content-Type": "application/json"
-            }
-            
-            data = {
+            payload = {
                 "model": self.model_name,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                "temperature": 0.7,
                 "max_tokens": 500,
-                "stream": False
+                "temperature": 0.7
             }
             
-            # Асинхронный HTTP запрос
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: requests.post(self.lm_studio_url, headers=headers, json=data, timeout=30)
-            )
+            response = requests.post(self.lm_studio_url, json=payload, timeout=30)
             
             if response.status_code == 200:
                 result = response.json()
-                return result["choices"][0]["message"]["content"].strip()
+                return result["choices"][0]["message"]["content"]
             else:
-                logger.error(f"LM Studio API error: {response.status_code} - {response.text}")
-                return "Извините, произошла техническая ошибка. Попробуйте еще раз."
+                logger.error(f"Ошибка LM Studio: {response.status_code} - {response.text}")
+                return self._get_fallback_response(user_message)
                 
-        except requests.exceptions.ConnectionError:
-            logger.error("Не удается подключиться к LM Studio. Убедитесь, что сервер запущен на localhost:1234")
-            return "Техническая ошибка: сервер недоступен."
-        except requests.exceptions.Timeout:
-            logger.error("Таймаут при обращении к LM Studio")
-            return "Извините, запрос занял слишком много времени."
         except Exception as e:
             logger.error(f"Ошибка вызова LLM: {e}")
-            return "Произошла техническая ошибка."
+            return self._get_fallback_response(user_message)
+    
+    def _get_fallback_response(self, user_message: str) -> str:
+        """Fallback ответы когда LM Studio недоступен"""
+        fallback_responses = [
+            "Расскажите подробнее о вашем опыте работы с указанными в резюме технологиями.",
+            "Какой проект из вашего опыта считаете наиболее сложным и почему?",
+            "Как вы обычно подходите к решению технических проблем?",
+            "Расскажите о ситуации, когда вам пришлось изучать новую технологию в сжатые сроки.",
+            "Какие у вас планы профессионального развития на ближайшие 2-3 года?",
+            "Опишите идеальную рабочую среду для вас.",
+            "Как вы оцениваете свои навыки работы в команде?",
+            "Спасибо за ваши ответы! Собеседование завершено. Мы свяжемся с вами в ближайшее время."
+        ]
+        
+        # Простая логика выбора ответа на основе количества вопросов
+        if self.question_count < len(fallback_responses):
+            return fallback_responses[self.question_count - 1]
+        else:
+            return fallback_responses[-1]  # Завершающий ответ

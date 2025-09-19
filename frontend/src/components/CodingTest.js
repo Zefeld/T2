@@ -54,10 +54,11 @@ const CodingTest = () => {
     
     setLoading(true);
     try {
-      const response = await axios.post('/api/coding-test/start', {
-        session_id: sessionId,
-        language: language
-      });
+      const formData = new FormData();
+      formData.append('session_id', sessionId);
+      formData.append('language', language);
+      
+      const response = await axios.post('/api/coding-test/start', formData);
       
       setTestData(response.data);
       setCode(response.data.starter_code || '');
@@ -78,11 +79,12 @@ const CodingTest = () => {
   const runCode = async () => {
     setLoading(true);
     try {
-      const response = await axios.post('/api/coding-test/run', {
-        session_id: sessionId,
-        code: code,
-        language: language
-      });
+      const formData = new FormData();
+      formData.append('session_id', sessionId);
+      formData.append('code', code);
+      formData.append('language', language);
+      
+      const response = await axios.post('/api/coding-test/run', formData);
       
       setTestResults(response.data);
     } catch (error) {
@@ -99,11 +101,14 @@ const CodingTest = () => {
   const submitTest = async () => {
     setLoading(true);
     try {
-      const response = await axios.post('/api/coding-test/submit', {
-        session_id: sessionId,
+      const formData = new FormData();
+      formData.append('session_id', sessionId);
+      formData.append('solution', JSON.stringify({
         code: code,
         language: language
-      });
+      }));
+      
+      const response = await axios.post('/api/submit-test', formData);
       
       setTestResults(response.data);
       setTestCompleted(true);

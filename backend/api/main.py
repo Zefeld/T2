@@ -115,7 +115,7 @@ async def health_check():
 
 # === СЕССИИ КАНДИДАТОВ ===
 
-@app.post("/api/sessions/create")
+@app.post("/api/create-session")
 async def create_session():
     """Создание новой сессии кандидата"""
     try:
@@ -153,36 +153,39 @@ async def get_session(session_id: str):
 
 # === БЛОК 1: АНАЛИЗ РЕЗЮМЕ ===
 
-@app.post("/api/resume/upload/{session_id}")
-async def upload_resume(session_id: str, file: UploadFile = File(...)):
-    """Загрузка и анализ резюме"""
+@app.post("/api/upload-resume")
+async def upload_resume(session_id: str = Form(...), file: UploadFile = File(...)):
+    """Загрузка резюме кандидата"""
     try:
         if session_id not in active_sessions:
             raise HTTPException(status_code=404, detail="Сессия не найдена")
         
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="Поддерживаются только PDF файлы")
-        
         # Сохранение файла
-        file_path = await resume_service.save_uploaded_file(file, session_id)
+        upload_dir = Path("uploads")
+        upload_dir.mkdir(exist_ok=True)
+        
+        file_path = upload_dir / f"{session_id}_{file.filename}"
+        
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
         
         # Анализ резюме
-        analysis_result = await resume_service.analyze_resume(file_path)
+        resume_analysis = await resume_service.analyze_resume(str(file_path))
         
         # Обновление сессии
-        active_sessions[session_id]["resume_analysis"] = analysis_result
-        active_sessions[session_id]["current_step"] = "interview"
-        
-        logger.info(f"Резюме проанализировано для сессии {session_id}")
+        session = active_sessions[session_id]
+        session["resume_file"] = str(file_path)
+        session["resume_analysis"] = resume_analysis
+        session["current_step"] = "resume_analyzed"
         
         return {
-            "status": "success",
-            "analysis": analysis_result,
-            "next_step": "interview"
+            "status": "uploaded",
+            "analysis": resume_analysis
         }
         
     except Exception as e:
-        logger.error(f"Ошибка анализа резюме: {e}")
+        logger.error(f"Ошибка загрузки резюме: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/resume/analysis/{session_id}")
@@ -199,8 +202,8 @@ async def get_resume_analysis(session_id: str):
 
 # === БЛОК 2: AI ИНТЕРВЬЮ ===
 
-@app.post("/api/interview/start/{session_id}")
-async def start_interview(session_id: str):
+@app.post("/api/start-interview")
+async def start_interview(session_id: str = Form(...)):
     """Начало AI интервью"""
     try:
         if session_id not in active_sessions:
@@ -229,8 +232,8 @@ async def start_interview(session_id: str):
         logger.error(f"Ошибка начала интервью: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/interview/message/{session_id}")
-async def send_interview_message(session_id: str, message: dict):
+@app.post("/api/interview-message")
+async def send_interview_message(session_id: str = Form(...), message: str = Form(...)):
     """Отправка сообщения в интервью"""
     try:
         if session_id not in active_sessions:
@@ -242,12 +245,10 @@ async def send_interview_message(session_id: str, message: dict):
         if not interview_data:
             raise HTTPException(status_code=400, detail="Интервью не начато")
         
-        user_message = message.get("message", "")
-        
         # Обработка сообщения
         response = await interview_service.process_message(
             interview_data["interview_id"], 
-            user_message
+            message
         )
         
         # Обновление данных интервью
@@ -293,6 +294,58 @@ async def complete_interview(session_id: str):
         logger.error(f"Ошибка завершения интервью: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# === ГОЛОСОВОЕ ИНТЕРВЬЮ ===
+
+@app.post("/api/voice-interview")
+async def voice_interview(session_id: str = Form(...), audio: UploadFile = File(...)):
+    """Голосовое интервью"""
+    try:
+        if session_id not in active_sessions:
+            raise HTTPException(status_code=404, detail="Сессия не найдена")
+        
+        session = active_sessions[session_id]
+        interview_data = session.get("interview_data")
+        
+        if not interview_data:
+            raise HTTPException(status_code=400, detail="Интервью не начато")
+        
+        # Сохранение аудио файла
+        audio_dir = Path("audio")
+        audio_dir.mkdir(exist_ok=True)
+        
+        audio_path = audio_dir / f"{session_id}_{uuid.uuid4()}.wav"
+        
+        with open(audio_path, "wb") as buffer:
+            content = await audio.read()
+            buffer.write(content)
+        
+        # Распознавание речи
+        text = await stt_service.transcribe_audio(str(audio_path))
+        
+        # Обработка сообщения
+        response = await interview_service.process_message(
+            interview_data["interview_id"], 
+            text
+        )
+        
+        # Генерация голосового ответа
+        audio_response_path = await tts_service.generate_speech(response["ai_response"])
+        
+        # Обновление данных интервью
+        session["interview_data"] = response["interview_data"]
+        
+        return {
+            "status": "success",
+            "transcribed_text": text,
+            "response": response["ai_response"],
+            "audio_response": audio_response_path,
+            "is_completed": response.get("is_completed", False)
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка голосового интервью: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # === БЛОК 3: ТЕСТОВОЕ ЗАДАНИЕ ===
 
 @app.post("/api/coding-test/generate/{session_id}")
@@ -324,36 +377,33 @@ async def generate_coding_test(session_id: str):
         logger.error(f"Ошибка генерации теста: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/coding-test/submit/{session_id}")
-async def submit_coding_solution(session_id: str, solution: dict):
+@app.post("/api/submit-test")
+async def submit_coding_solution(session_id: str = Form(...), solution: str = Form(...)):
     """Отправка решения тестового задания"""
     try:
         if session_id not in active_sessions:
             raise HTTPException(status_code=404, detail="Сессия не найдена")
         
         session = active_sessions[session_id]
-        test_data = session.get("coding_test_data")
+        coding_test = session.get("coding_test")
         
-        if not test_data:
-            raise HTTPException(status_code=400, detail="Тестовое задание не найдено")
+        if not coding_test:
+            raise HTTPException(status_code=400, detail="Тестовое задание не создано")
         
-        code = solution.get("code", "")
-        language = solution.get("language", "python")
-        
-        # Отправка решения
-        result = await coding_test_service.submit_solution(
-            test_data["test_id"], 
-            code, 
-            language
+        # Оценка решения
+        evaluation = await coding_test_service.evaluate_solution(
+            coding_test["test_id"],
+            solution
         )
         
         # Обновление сессии
-        session["coding_test_data"]["result"] = result
+        session["test_solution"] = solution
+        session["test_evaluation"] = evaluation
         session["current_step"] = "completed"
         
         return {
-            "status": "evaluated",
-            "result": result
+            "status": "submitted",
+            "evaluation": evaluation
         }
         
     except Exception as e:
@@ -362,7 +412,7 @@ async def submit_coding_solution(session_id: str, solution: dict):
 
 # === ГЕНЕРАЦИЯ ОТЧЕТОВ ===
 
-@app.get("/api/report/candidate/{session_id}")
+@app.get("/api/session-report/{session_id}")
 async def generate_candidate_report(session_id: str):
     """Генерация отчета для кандидата"""
     try:
@@ -398,13 +448,22 @@ async def generate_candidate_report(session_id: str):
         if interview_data.get("final_result", {}).get("strengths"):
             candidate_report["summary"]["strengths"].extend(interview_data["final_result"]["strengths"])
         
+        return {
+            "status": "generated",
+            "report": candidate_report
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка генерации отчета: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+        
         return candidate_report
         
     except Exception as e:
         logger.error(f"Ошибка генерации отчета кандидата: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/report/employer/{session_id}")
+@app.get("/api/candidate-feedback/{session_id}")
 async def generate_employer_report(session_id: str):
     """Генерация отчета для работодателя"""
     try:
@@ -447,7 +506,10 @@ async def generate_employer_report(session_id: str):
         if scores:
             employer_report["overall_score"] = sum(scores) / len(scores)
         
-        return employer_report
+        return {
+            "status": "generated",
+            "report": employer_report
+        }
         
     except Exception as e:
         logger.error(f"Ошибка генерации отчета работодателя: {e}")

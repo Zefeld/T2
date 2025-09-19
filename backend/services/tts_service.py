@@ -1,6 +1,6 @@
 import os
 import asyncio
-from typing import Optional
+from typing import Optional, Dict, Any
 import logging
 import wave
 import io
@@ -138,58 +138,162 @@ class TTSService:
             logger.error(f"Ошибка загрузки {url}: {e}")
             raise
     
-    async def generate_speech(self, text: str, output_path: Optional[str] = None) -> str:
+    async def generate_speech(self, text: str, output_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Синтез речи из текста
+        Генерирует речь из текста с улучшенной обработкой ошибок
         
         Args:
             text: Текст для синтеза
-            output_path: Путь для сохранения аудио файла
+            output_path: Путь для сохранения (опционально)
             
         Returns:
-            Путь к созданному аудио файлу
+            Словарь с результатом синтеза
         """
         try:
-            if not self.piper_path:
-                return await self._fallback_synthesize(text, output_path)
+            if not text.strip():
+                return {
+                    'success': False,
+                    'error': 'Пустой текст для синтеза'
+                }
             
-            # Создание временного файла если путь не указан
-            if not output_path:
+            # Проверка длины текста
+            if len(text) > 5000:
+                return {
+                    'success': False,
+                    'error': 'Текст слишком длинный (максимум 5000 символов)'
+                }
+            
+            # Попытка использовать Piper
+            if self.piper_path and self.model_path:
+                try:
+                    result = await self._synthesize_with_piper_enhanced(text, output_path)
+                    if result['success']:
+                        return result
+                except Exception as piper_error:
+                    logger.warning(f"Piper недоступен: {piper_error}")
+            
+            # Fallback к созданию тишины
+            return await self._synthesize_fallback(text, output_path)
+            
+        except Exception as e:
+            logger.error(f"Ошибка генерации речи: {e}")
+            return {
+                'success': False,
+                'error': f'Ошибка генерации речи: {str(e)}'
+            }
+    
+    async def _synthesize_with_piper_enhanced(self, text: str, output_path: Optional[str] = None) -> Dict[str, Any]:
+        """Улучшенный синтез с Piper"""
+        try:
+            # Создаем временный файл если путь не указан
+            if output_path is None:
                 temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
                 output_path = temp_file.name
                 temp_file.close()
-            
-            # Подготовка команды
-            if isinstance(self.piper_path, list):
-                cmd = self.piper_path.copy()
+                cleanup_temp = True
             else:
-                cmd = [self.piper_path]
+                cleanup_temp = False
             
-            if self.model_path:
-                cmd.extend(["--model", self.model_path])
+            try:
+                # Команда для Piper
+                cmd = [
+                    "python", "-m", "piper",
+                    "--model", str(self.model_path),
+                    "--output_file", output_path
+                ]
+                
+                # Запуск процесса
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                # Отправляем текст
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(input=text.encode('utf-8')),
+                    timeout=30.0
+                )
+                
+                if process.returncode == 0 and os.path.exists(output_path):
+                    # Читаем аудио данные
+                    with open(output_path, 'rb') as f:
+                        audio_data = f.read()
+                    
+                    # Получаем длительность
+                    duration = self._get_audio_duration(output_path)
+                    
+                    result = {
+                        'success': True,
+                        'audio_data': audio_data,
+                        'file_path': output_path if not cleanup_temp else None,
+                        'format': 'wav',
+                        'sample_rate': self.sample_rate,
+                        'duration': duration,
+                        'model': 'piper-tts'
+                    }
+                    
+                    if cleanup_temp:
+                        os.unlink(output_path)
+                    
+                    return result
+                else:
+                    error_msg = stderr.decode() if stderr else "Неизвестная ошибка Piper"
+                    raise Exception(f"Piper завершился с ошибкой: {error_msg}")
+                    
+            except asyncio.TimeoutError:
+                raise Exception("Timeout при синтезе речи")
+            except Exception as e:
+                if cleanup_temp and os.path.exists(output_path):
+                    os.unlink(output_path)
+                raise e
+                
+        except Exception as e:
+            raise Exception(f"Ошибка Piper синтеза: {e}")
+    
+    async def _synthesize_fallback(self, text: str, output_path: Optional[str] = None) -> Dict[str, Any]:
+        """Fallback синтез (создание тишины)"""
+        try:
+            # Вычисляем длительность на основе текста
+            duration = min(len(text) * 0.08, 10.0)  # ~0.08 сек на символ, максимум 10 сек
             
-            cmd.extend(["--output_file", output_path])
+            if output_path:
+                await self._create_silence_audio(output_path, duration)
+                
+                with open(output_path, 'rb') as f:
+                    audio_data = f.read()
+            else:
+                audio_data = await self._create_silence_bytes(duration)
             
-            # Выполнение синтеза
-            process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            stdout, stderr = process.communicate(input=text)
-            
-            if process.returncode != 0:
-                raise Exception(f"Ошибка Piper TTS: {stderr}")
-            
-            logger.info(f"Синтез речи завершен: {output_path}")
-            return output_path
+            return {
+                'success': True,
+                'audio_data': audio_data,
+                'file_path': output_path,
+                'format': 'wav',
+                'sample_rate': self.sample_rate,
+                'duration': duration,
+                'model': 'fallback',
+                'warning': 'TTS недоступен, создан файл тишины'
+            }
             
         except Exception as e:
-            logger.error(f"Ошибка синтеза речи: {e}")
-            return await self._fallback_synthesize(text, output_path)
+            return {
+                'success': False,
+                'error': f'Ошибка fallback синтеза: {str(e)}'
+            }
+    
+    def _get_audio_duration(self, audio_path: str) -> float:
+        """Получает длительность аудио файла"""
+        try:
+            with wave.open(audio_path, 'rb') as wav_file:
+                frames = wav_file.getnframes()
+                sample_rate = wav_file.getframerate()
+                return frames / sample_rate
+        except Exception:
+            # Примерная оценка
+            file_size = os.path.getsize(audio_path)
+            return max(file_size / (self.sample_rate * 2), 0.1)
     
     def _synthesize_with_piper(self, text: str, output_path: str):
         """Синтез речи через Piper CLI"""
@@ -259,12 +363,50 @@ class TTSService:
             logger.error(f"Ошибка генерации потока: {str(e)}")
             return await self._create_silence_bytes(duration=len(text) * 0.1)
     
+    async def _create_silence_bytes(self, duration: float) -> bytes:
+        """Создает байты тишины заданной длительности"""
+        try:
+            import io
+            import struct
+            
+            # Параметры WAV файла
+            sample_rate = self.sample_rate
+            num_samples = int(duration * sample_rate)
+            
+            # Создаем WAV в памяти
+            buffer = io.BytesIO()
+            
+            # WAV заголовок
+            buffer.write(b'RIFF')
+            buffer.write(struct.pack('<I', 36 + num_samples * 2))  # Размер файла
+            buffer.write(b'WAVE')
+            buffer.write(b'fmt ')
+            buffer.write(struct.pack('<I', 16))  # Размер fmt chunk
+            buffer.write(struct.pack('<H', 1))   # PCM формат
+            buffer.write(struct.pack('<H', 1))   # Моно
+            buffer.write(struct.pack('<I', sample_rate))
+            buffer.write(struct.pack('<I', sample_rate * 2))  # Byte rate
+            buffer.write(struct.pack('<H', 2))   # Block align
+            buffer.write(struct.pack('<H', 16))  # Bits per sample
+            buffer.write(b'data')
+            buffer.write(struct.pack('<I', num_samples * 2))  # Размер данных
+            
+            # Данные тишины (нули)
+            silence_data = b'\x00\x00' * num_samples
+            buffer.write(silence_data)
+            
+            return buffer.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Ошибка создания тишины в памяти: {e}")
+            # Минимальный WAV файл
+            return b'RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00D\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
     async def _create_silence_audio(self, output_path: str, duration: float = 1.0):
         """Создание файла с тишиной"""
         try:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            sample_rate = 22050
+            sample_rate = self.sample_rate
             frames = int(sample_rate * duration)
             
             with wave.open(output_path, "wb") as wav_file:
@@ -275,26 +417,6 @@ class TTSService:
                 
         except Exception as e:
             logger.error(f"Ошибка создания файла тишины: {str(e)}")
-    
-    async def _create_silence_bytes(self, duration: float = 1.0) -> bytes:
-        """Создание байтов тишины"""
-        try:
-            sample_rate = 22050
-            frames = int(sample_rate * duration)
-            
-            # Создание WAV заголовка и данных
-            buffer = io.BytesIO()
-            with wave.open(buffer, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
-                wav_file.setframerate(sample_rate)
-                wav_file.writeframes(b'\x00' * (frames * 2))
-            
-            return buffer.getvalue()
-            
-        except Exception as e:
-            logger.error(f"Ошибка создания байтов тишины: {str(e)}")
-            return b''
     
     def is_model_ready(self) -> bool:
         """Проверка готовности TTS сервиса"""

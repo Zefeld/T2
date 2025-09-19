@@ -18,6 +18,7 @@ class InterviewSession(Base):
     
     session_id = Column(String, primary_key=True)
     candidate_name = Column(String)
+    position = Column(String)
     resume_analysis = Column(JSON)
     interview_transcript = Column(Text)
     interview_analysis = Column(JSON)
@@ -36,14 +37,15 @@ class SessionManager:
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
     
-    def create_session(self, candidate_name: str = None) -> str:
+    def create_session(self, candidate_name: str = None, position: str = None) -> str:
         """Создание новой сессии"""
         session_id = str(uuid.uuid4())
         
         with self.SessionLocal() as db:
             session = InterviewSession(
                 session_id=session_id,
-                candidate_name=candidate_name or "Неизвестный кандидат"
+                candidate_name=candidate_name or "Неизвестный кандидат",
+                position=position or "Не указана"
             )
             db.add(session)
             db.commit()
@@ -152,6 +154,14 @@ class SessionManager:
             logger.info(f"Сгенерирован финальный отчет для сессии {session_id}")
             return report
     
+    def session_exists(self, session_id: str) -> bool:
+        """Проверка существования сессии"""
+        with self.SessionLocal() as db:
+            session = db.query(InterviewSession).filter(
+                InterviewSession.session_id == session_id
+            ).first()
+            return session is not None
+
     def get_session_data(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Получение данных сессии"""
         with self.SessionLocal() as db:

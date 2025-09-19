@@ -23,7 +23,8 @@ const HomePage = () => {
     setError(null);
     
     try {
-      const response = await axios.post('/api/sessions/create');
+      const formData = new FormData();
+      const response = await axios.post('/api/create-session', formData);
       const newSessionId = response.data.session_id;
       
       setSessionId(newSessionId);

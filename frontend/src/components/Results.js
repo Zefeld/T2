@@ -36,8 +36,8 @@ const Results = () => {
 
   const fetchResults = async (sessionId) => {
     try {
-      const response = await axios.get(`/api/results/${sessionId}`);
-      setResults(response.data);
+      const response = await axios.get(`/api/session-report/${sessionId}`);
+      setResults(response.data.report);
     } catch (err) {
       setError('Ошибка при загрузке результатов');
       console.error('Error fetching results:', err);
@@ -50,7 +50,7 @@ const Results = () => {
     if (!sessionId) return;
     
     try {
-      const response = await axios.get(`/api/report/download/${sessionId}`, {
+      const response = await axios.get(`/api/candidate-feedback/${sessionId}`, {
         responseType: 'blob'
       });
       

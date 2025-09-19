@@ -56,6 +56,7 @@ class VoiceMessage(BaseModel):
 
 class SessionCreate(BaseModel):
     candidate_name: str = "Неизвестный кандидат"
+    position: str = "Не указана"
 
 @app.get("/")
 async def root():
@@ -65,7 +66,10 @@ async def root():
 async def create_session(session_data: SessionCreate):
     """Создание новой сессии интервью"""
     try:
-        session_id = session_manager.create_session(session_data.candidate_name)
+        session_id = session_manager.create_session(
+            session_data.candidate_name, 
+            session_data.position
+        )
         return {
             "success": True,
             "session_id": session_id,
@@ -85,24 +89,15 @@ async def upload_resume(file: UploadFile = File(...), session_id: str = Form(...
         if not file.filename.lower().endswith(('.pdf', '.txt', '.docx')):
             raise HTTPException(status_code=400, detail="Поддерживаются только PDF, TXT и DOCX файлы")
         
-        # Сохранение файла
-        file_path = f"uploads/{session_id}_{file.filename}"
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+        # Чтение содержимого файла
+        content = await file.read()
         
         # Анализ резюме
-        analysis = await resume_analyzer.analyze_resume(file_path)
+        analysis = await resume_analyzer.analyze_resume(content, file.filename)
         
         # Сохранение результата в сессии
         session_manager.update_resume_analysis(session_id, analysis)
-        
-        # Удаление временного файла
-        try:
-            os.remove(file_path)
-        except:
-            pass
-        
+
         return {
             "success": True,
             "analysis": analysis,
@@ -177,60 +172,80 @@ async def process_interview_message(message: InterviewMessage):
         raise HTTPException(status_code=500, detail=f"Ошибка обработки сообщения: {str(e)}")
 
 @app.post("/api/voice-interview")
-async def process_voice_message(file: UploadFile = File(...), session_id: str = ""):
+async def process_voice_message(file: UploadFile = File(...), session_id: str = Form(...)):
     """Обработка голосового сообщения в интервью"""
     try:
         if not session_id:
             raise HTTPException(status_code=400, detail="Не указан session_id")
         
-        # Сохранение аудио файла
-        audio_path = f"audio/{session_id}_{uuid.uuid4().hex}.wav"
-        with open(audio_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Транскрибация речи
-        transcription = await stt_service.transcribe_audio(audio_path)
-        
-        # Сохранение ответа кандидата
-        session_manager.add_interview_message(session_id, "Кандидат", transcription)
-        
-        # Получение данных сессии
-        session_info = session_manager.get_session_data(session_id)
-        if not session_info:
+        # Проверка сессии
+        if not session_manager.session_exists(session_id):
             raise HTTPException(status_code=404, detail="Сессия не найдена")
         
-        # Генерация ответа
-        response_text = await interview_service.process_answer(
-            transcription,
-            session_info.get("resume_analysis", {}),
-            session_info.get("interview_transcript", "")
+        # Чтение аудио данных
+        audio_data = await file.read()
+        
+        # Транскрипция аудио с помощью STT
+        transcription_result = stt_service.transcribe_audio(
+            audio_data=audio_data,
+            use_api=True  # Используем Nemo Parakeet V3 API
         )
         
-        # Сохранение ответа интервьюера
-        session_manager.add_interview_message(session_id, "Интервьюер", response_text)
+        if not transcription_result.get('success', False):
+            # Fallback к локальной модели
+            transcription_result = stt_service.transcribe_audio(
+                audio_data=audio_data,
+                use_api=False
+            )
         
-        # Генерация аудио ответа
-        response_audio_path = f"audio/{session_id}_response_{uuid.uuid4().hex}.wav"
-        await tts_service.generate_speech(response_text, response_audio_path)
+        if not transcription_result.get('success', False):
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Ошибка транскрипции: {transcription_result.get('error', 'Неизвестная ошибка')}"
+            )
         
-        # Очистка входного аудио файла
-        try:
-            os.remove(audio_path)
-        except:
-            pass
+        transcribed_text = transcription_result.get('text', '').strip()
+        
+        if not transcribed_text:
+            return {
+                "success": False,
+                "error": "Не удалось распознать речь",
+                "transcription_info": transcription_result
+            }
+        
+        # Обработка сообщения через интервью сервис
+        interview_response = interview_service.process_message(
+            session_id, 
+            transcribed_text
+        )
+        
+        # Генерация аудио ответа с помощью TTS
+        tts_result = tts_service.generate_speech(interview_response.get('response', ''))
+        
+        # Возвращаем аудио данные в base64 для прямой передачи
+        audio_data_b64 = None
+        if tts_result.get('success', False) and tts_result.get('audio_data'):
+            import base64
+            audio_data_b64 = base64.b64encode(tts_result['audio_data']).decode('utf-8')
         
         return {
             "success": True,
-            "transcription": transcription,
-            "response": response_text,
-            "audio_url": f"/api/audio/{os.path.basename(response_audio_path)}"
+            "transcribed_text": transcribed_text,
+            "response": interview_response.get('response', ''),
+            "audio_data": audio_data_b64,
+            "interview_status": interview_response.get('status', 'active'),
+            "transcription_model": transcription_result.get('model', 'unknown'),
+            "tts_model": tts_result.get('model', 'unknown'),
+            "warnings": []
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка обработки голоса: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Ошибка обработки голосового сообщения: {str(e)}"
+        }
 
 @app.get("/api/audio/{filename}")
 async def get_audio_file(filename: str):

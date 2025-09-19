@@ -23,6 +23,32 @@
   margin: 0 auto;
 }
 
+.voice-toggle {
+  margin-top: 20px;
+}
+
+.voice-toggle-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 12px 24px;
+  border-radius: 25px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.voice-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.voice-toggle-btn.active {
+  background: #667eea;
+  border-color: #667eea;
+  color: white;
+}
+
 .interview-container {
   background: white;
   border-radius: 16px;
@@ -162,8 +188,38 @@
 
 .message-text {
   font-size: 1rem;
-  line-height: 1.5;
+  line-height: 1.6;
+  color: #333;
   margin-bottom: 8px;
+  position: relative;
+}
+
+.voice-indicator {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.audio-play-btn {
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: background-color 0.3s ease;
+}
+
+.audio-play-btn:hover {
+  background: #5a67d8;
+}
+
+.audio-play-btn:disabled {
+  background: #cbd5e0;
+  cursor: not-allowed;
 }
 
 .message-time {
@@ -296,5 +352,100 @@
   
   .next-steps {
     flex-direction: column;
+  }
+}
+
+.voice-input-container {
+  padding: 20px;
+  background: #f8f9fa;
+  border-top: 1px solid #e9ecef;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: center;
+}
+
+.voice-record-btn {
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 16px 32px;
+  border-radius: 50px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 200px;
+  justify-content: center;
+}
+
+.voice-record-btn:hover {
+  background: #5a67d8;
+  transform: translateY(-2px);
+}
+
+.voice-record-btn.recording {
+  background: #e53e3e;
+  animation: pulse 1.5s infinite;
+}
+
+.voice-record-btn.recording:hover {
+  background: #c53030;
+}
+
+.recording-indicator {
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-radius: 50%;
+  animation: blink 1s infinite;
+}
+
+.voice-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 40px;
+  justify-content: center;
+}
+
+.recording-text {
+  color: #e53e3e;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.processing-text {
+  color: #667eea;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(229, 62, 62, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(229, 62, 62, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(229, 62, 62, 0);
+  }
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0.3;
   }
 }

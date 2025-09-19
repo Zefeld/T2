@@ -59,11 +59,22 @@ class GemmaClient:
                 return result["choices"][0]["message"]["content"]
             else:
                 logger.error(f"Ошибка API LM Studio: {response.status_code} - {response.text}")
-                return f"Ошибка подключения к LM Studio: {response.status_code}"
+                return self._get_fallback_response(prompt)
                 
         except Exception as e:
-            logger.error(f"Ошибка генерации ответа Gemma: {str(e)}")
-            return f"Ошибка обработки запроса: {str(e)}"
+            logger.error(f"Не удалось подключиться к LM Studio: {e}")
+            return self._get_fallback_response(prompt)
+    
+    def _get_fallback_response(self, prompt: str) -> str:
+        """Fallback ответы когда LM Studio недоступен"""
+        if "резюме" in prompt.lower():
+            return "Анализ резюме временно недоступен. Пожалуйста, попробуйте позже."
+        elif "интервью" in prompt.lower():
+            return "Расскажите о своем опыте работы и профессиональных навыках."
+        elif "код" in prompt.lower():
+            return "Анализ кода временно недоступен. Пожалуйста, попробуйте позже."
+        else:
+            return "Сервис временно недоступен. Пожалуйста, попробуйте позже."
     
     async def analyze_resume_json(self, resume_text: str) -> Dict[str, Any]:
         """
