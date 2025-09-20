@@ -8,7 +8,6 @@ import { combineReducers } from '@reduxjs/toolkit';
 import { authApi } from './api/authApi';
 import { userApi } from './api/userApi';
 import { voiceApi } from './api/voiceApi';
-import { llmApi } from './api/llmApi';
 import { analyticsApi } from './api/analyticsApi';
 import { gamificationApi } from './api/gamificationApi';
 
@@ -53,7 +52,6 @@ const rootReducer = combineReducers({
   [authApi.reducerPath]: authApi.reducer,
   [userApi.reducerPath]: userApi.reducer,
   [voiceApi.reducerPath]: voiceApi.reducer,
-  [llmApi.reducerPath]: llmApi.reducer,
   [analyticsApi.reducerPath]: analyticsApi.reducer,
   [gamificationApi.reducerPath]: gamificationApi.reducer,
   
@@ -88,7 +86,6 @@ export const store = configureStore({
       .concat(authApi.middleware)
       .concat(userApi.middleware)
       .concat(voiceApi.middleware)
-      .concat(llmApi.middleware)
       .concat(analyticsApi.middleware)
       .concat(gamificationApi.middleware),
   
@@ -112,7 +109,6 @@ export { useAppDispatch, useAppSelector } from './hooks';
 export * from './api/authApi';
 export * from './api/userApi';
 export * from './api/voiceApi';
-export * from './api/llmApi';
 export * from './api/analyticsApi';
 export * from './api/gamificationApi';
 
@@ -132,7 +128,6 @@ export const clearCache = () => {
   store.dispatch(authApi.util.resetApiState());
   store.dispatch(userApi.util.resetApiState());
   store.dispatch(voiceApi.util.resetApiState());
-  store.dispatch(llmApi.util.resetApiState());
   store.dispatch(analyticsApi.util.resetApiState());
   store.dispatch(gamificationApi.util.resetApiState());
 };

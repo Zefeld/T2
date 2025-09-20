@@ -295,27 +295,27 @@ WHERE dp.title = 'ML Engineering Transition';
 -- SAMPLE RECOMMENDATIONS
 -- ============================================================================
 
-INSERT INTO learning.recommendations (user_id, recommendation_type, title, description, related_course_id, confidence_score, reasoning, llm_model_version, status) VALUES
+INSERT INTO learning.recommendations (user_id, recommendation_type, title, description, related_course_id, confidence_score, reasoning, status) VALUES
 ((SELECT id FROM auth.users WHERE external_id = 'demo-employee-001'), 
  'course', 'Leadership Fundamentals', 
  'Based on your career goal to become a Tech Lead, this course will help you develop essential leadership skills.',
  (SELECT id FROM learning.courses WHERE title = 'Leadership Fundamentals'),
  0.92, 'User expressed interest in leadership role and has strong technical skills but lacks formal leadership training',
- 'gpt-4-turbo', 'pending'),
+ 'pending'),
 
 ((SELECT id FROM auth.users WHERE external_id = 'demo-employee-002'), 
  'course', 'Docker and Kubernetes', 
  'To transition to ML Engineering, you should learn containerization technologies used in production ML systems.',
  (SELECT id FROM learning.courses WHERE title = 'Docker and Kubernetes'),
  0.88, 'User has strong ML skills but needs infrastructure knowledge for production deployment',
- 'gpt-4-turbo', 'pending'),
+ 'pending'),
 
 ((SELECT id FROM auth.users WHERE external_id = 'demo-employee-003'), 
  'skill', 'Machine Learning', 
  'Adding ML skills would complement your DevOps expertise and open opportunities in MLOps.',
  NULL,
  0.75, 'User has strong infrastructure skills and could benefit from understanding ML workloads',
- 'gpt-4-turbo', 'pending');
+ 'pending');
 
 -- ============================================================================
 -- SAMPLE ANALYTICS DATA

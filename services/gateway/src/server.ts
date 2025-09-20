@@ -28,7 +28,6 @@ import { analyticsRoutes } from './routes/analytics';
 import { jobRoutes } from './routes/jobs';
 import { notificationRoutes } from './routes/notifications';
 import { voiceRoutes } from './routes/voice';
-import { llmRoutes } from './routes/llm';
 import { connectDatabase } from './database/connection';
 import { connectRedis } from './cache/redis';
 import { swaggerSpec } from './config/swagger';
@@ -152,7 +151,6 @@ app.use('/api/analytics', authenticateToken, analyticsRoutes);
 app.use('/api/jobs', authenticateToken, jobRoutes);
 app.use('/api/notifications', authenticateToken, notificationRoutes);
 app.use('/api/voice', authenticateToken, voiceRoutes);
-app.use('/api/llm', authenticateToken, llmRoutes);
 
 /**
  * Microservice Proxies

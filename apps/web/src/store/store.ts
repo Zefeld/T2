@@ -3,7 +3,6 @@ import { setupListeners } from '@reduxjs/toolkit/query';
 import { authApi } from './api/authApi';
 import { userApi } from './api/userApi';
 import { voiceApi } from './api/voiceApi';
-import { llmApi } from './api/llmApi';
 import { analyticsApi } from './api/analyticsApi';
 import { gamificationApi } from './api/gamificationApi';
 import authReducer from './slices/authSlice';
@@ -18,7 +17,6 @@ export const store = configureStore({
     [authApi.reducerPath]: authApi.reducer,
     [userApi.reducerPath]: userApi.reducer,
     [voiceApi.reducerPath]: voiceApi.reducer,
-    [llmApi.reducerPath]: llmApi.reducer,
     [analyticsApi.reducerPath]: analyticsApi.reducer,
     [gamificationApi.reducerPath]: gamificationApi.reducer,
     
@@ -49,7 +47,6 @@ export const store = configureStore({
       .concat(authApi.middleware)
       .concat(userApi.middleware)
       .concat(voiceApi.middleware)
-      .concat(llmApi.middleware)
       .concat(analyticsApi.middleware)
       .concat(gamificationApi.middleware),
   

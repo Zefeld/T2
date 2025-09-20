@@ -52,8 +52,10 @@ import {
   Close as CloseIcon,
   Refresh as RefreshIcon,
   BookmarkBorder as BookmarkIcon,
-  Bookmark as BookmarkedIcon
+  Bookmark as BookmarkedIcon,
+  Mic as MicIcon
 } from '@mui/icons-material';
+import VoiceAssistant from '../VoiceAssistant';
 
 interface CareerGoal {
   id: string;
@@ -98,6 +100,7 @@ const CareerCopilot: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [voiceAssistantOpen, setVoiceAssistantOpen] = useState(false);
 
   // Mock data
   const careerGoals: CareerGoal[] = [
@@ -277,18 +280,41 @@ const CareerCopilot: React.FC = () => {
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
       {/* Header */}
       <Box mb={4}>
-        <Box display="flex" alignItems="center" mb={2}>
-          <Avatar sx={{ bgcolor: 'primary.main', mr: 2 }}>
-            <PsychologyIcon />
-          </Avatar>
-          <Box>
-            <Typography variant="h4" component="h1">
-              Personal Career Copilot
-            </Typography>
-            <Typography variant="subtitle1" color="textSecondary">
-              Твой ИИ-помощник в карьерном развитии
-            </Typography>
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+          <Box display="flex" alignItems="center">
+            <Avatar sx={{ bgcolor: 'primary.main', mr: 2 }}>
+              <PsychologyIcon />
+            </Avatar>
+            <Box>
+              <Typography variant="h4" component="h1">
+                🤖 Personal Career Copilot
+              </Typography>
+              <Typography variant="subtitle1" color="textSecondary">
+                Твой ИИ-помощник в карьерном развитии
+              </Typography>
+            </Box>
           </Box>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<MicIcon />}
+            onClick={() => setVoiceAssistantOpen(true)}
+            sx={{ 
+              borderRadius: 3,
+              px: 3,
+              py: 1.5,
+              fontSize: '1rem',
+              fontWeight: 600,
+              boxShadow: 3,
+              '&:hover': {
+                boxShadow: 6,
+                transform: 'translateY(-2px)'
+              },
+              transition: 'all 0.3s ease'
+            }}
+          >
+            Голосовой помощник
+          </Button>
         </Box>
       </Box>
 
@@ -701,6 +727,14 @@ const CareerCopilot: React.FC = () => {
           </Box>
         </DialogContent>
       </Dialog>
+
+      {/* Voice Assistant */}
+      <VoiceAssistant 
+        open={voiceAssistantOpen}
+        onClose={() => setVoiceAssistantOpen(false)}
+        context="career_copilot"
+        systemPrompt="Ты - персональный карьерный коуч и помощник. Помогай пользователю с вопросами карьерного развития, планирования карьеры, развития навыков, поиска работы и профессионального роста. Отвечай на русском языке, будь дружелюбным и мотивирующим."
+      />
     </Container>
   );
 };

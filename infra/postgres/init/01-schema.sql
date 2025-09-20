@@ -223,7 +223,6 @@ CREATE TABLE learning.recommendations (
     related_skill_id UUID REFERENCES profiles.skills(id),
     confidence_score DECIMAL(3,2) CHECK (confidence_score >= 0 AND confidence_score <= 1),
     reasoning TEXT,
-    llm_model_version VARCHAR(50),
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected', 'completed')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -356,7 +355,6 @@ CREATE TABLE jobs.matches (
     reasoning TEXT,
     missing_skills UUID[] DEFAULT '{}',
     matching_skills UUID[] DEFAULT '{}',
-    llm_model_version VARCHAR(50),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(user_id, vacancy_id)
 );
@@ -444,24 +442,6 @@ CREATE TABLE transcripts (
     tts_job_id UUID REFERENCES tts_jobs(id),
     confidence_score DECIMAL(3,2),
     word_timestamps JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- LLM traces
-CREATE TABLE llm_traces (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES auth.users(id),
-    session_id UUID,
-    request_id VARCHAR(100) UNIQUE NOT NULL,
-    model_name VARCHAR(100),
-    prompt_tokens INTEGER,
-    completion_tokens INTEGER,
-    total_tokens INTEGER,
-    request_data JSONB,
-    response_data JSONB,
-    latency_ms INTEGER,
-    status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'timeout')),
-    error_message TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
